@@ -1,45 +1,37 @@
+# Stack.vyn - Clean Stack implementation
 import List
 
-# Create a new empty stack
-create = function() perform
-    return List.create()
+Make = function() perform
+    return create()
 endFunc
 
-# Push an item onto the top of the stack
-push = function(stack, item) perform
-    List.append(stack, item)
+Push = function(stack, item) perform
+    append(stack, item)
 endFunc
 
-# Remove and return the top item.
-# Returns 'NIL' if the stack is empty.
-pop = function(stack) perform
-    IF (List.length(stack) == 0) do
+Pop = function(stack) perform
+    IF (length(stack) == 0) do
         return 'NIL'
     end
-    return List.pop(stack)
+    return pop(stack)
 endFunc
 
-# Return the top item without removing it.
-# Returns 'NIL' if the stack is empty.
-top = function(stack) perform
-    IF (List.length(stack) == 0) do
+Top = function(stack) perform
+    IF (length(stack) == 0) do
         return 'NIL'
     end
-    lastIndex = List.length(stack) - 1
-    return List.get(stack, lastIndex)
+    last = length(stack) - 1
+    return get(stack, last)
 endFunc
 
-# Check if the stack is empty
-isEmpty = function(stack) perform
-    return List.length(stack) == 0
+IsEmpty = function(stack) perform
+    return length(stack) == 0
 endFunc
 
-# Return the number of elements in the stack
-size = function(stack) perform
-    return List.length(stack)
+Size = function(stack) perform
+    return length(stack)
 endFunc
 
-# Remove all elements from the stack
-clear = function(stack) perform
-    List.clear(stack)
+Clear = function(stack) perform
+    clear(stack)
 endFunc
