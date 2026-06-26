@@ -1,0 +1,45 @@
+import List
+
+# Create a new empty stack
+create = function() perform
+    return List.create()
+endFunc
+
+# Push an item onto the top of the stack
+push = function(stack, item) perform
+    List.append(stack, item)
+endFunc
+
+# Remove and return the top item.
+# Returns 'NIL' if the stack is empty.
+pop = function(stack) perform
+    IF (List.length(stack) == 0) do
+        return 'NIL'
+    end
+    return List.pop(stack)
+endFunc
+
+# Return the top item without removing it.
+# Returns 'NIL' if the stack is empty.
+top = function(stack) perform
+    IF (List.length(stack) == 0) do
+        return 'NIL'
+    end
+    lastIndex = List.length(stack) - 1
+    return List.get(stack, lastIndex)
+endFunc
+
+# Check if the stack is empty
+isEmpty = function(stack) perform
+    return List.length(stack) == 0
+endFunc
+
+# Return the number of elements in the stack
+size = function(stack) perform
+    return List.length(stack)
+endFunc
+
+# Remove all elements from the stack
+clear = function(stack) perform
+    List.clear(stack)
+endFunc
