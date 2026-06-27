@@ -6,19 +6,19 @@ Make = function() perform
 endFunc
 
 Push = function(stack, item) perform
-    append(stack, item)
+    return append(stack, item)
 endFunc
 
 Pop = function(stack) perform
     IF (length(stack) == 0) do
-        return 'NIL'
+        return NIL
     end
     return pop(stack)
 endFunc
 
 Top = function(stack) perform
     IF (length(stack) == 0) do
-        return 'NIL'
+        return NIL
     end
     last = length(stack) - 1
     return get(stack, last)
@@ -33,5 +33,5 @@ Size = function(stack) perform
 endFunc
 
 Clear = function(stack) perform
-    clear(stack)
+    return clear(stack)
 endFunc

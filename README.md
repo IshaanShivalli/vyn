@@ -2,6 +2,10 @@
 
 Vyn is a lightweight, dynamically-typed scripting language with an interactive REPL and support for structured programming. Vyn source files use the `.vyn` extension.
 
+![Build](https://github.com/IshaanShivalli/vyn/actions/workflows/build.yml/badge.svg)
+![License](https://img.shields.io/github/license/IshaanShivalli/vyn)
+![Stars](https://img.shields.io/github/stars/IshaanShivalli/vyn)
+
 ---
 
 ## Running Vyn Code

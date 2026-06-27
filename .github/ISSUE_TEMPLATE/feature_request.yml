@@ -1,0 +1,12 @@
+name: Feature Request
+description: Suggest a feature for Vyn
+title: "[FEATURE] "
+labels: ["enhancement"]
+
+body:
+  - type: textarea
+    id: feature
+    attributes:
+      label: Feature description
+    validations:
+      required: true

@@ -1,0 +1,19 @@
+name: Bug Report
+description: Report a bug in Vyn
+title: "[BUG] "
+labels: ["bug"]
+
+body:
+  - type: textarea
+    id: bug
+    attributes:
+      label: Describe the bug
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true

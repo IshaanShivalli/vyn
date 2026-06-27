@@ -5,21 +5,22 @@ import os
 
 IMPORT_RE = re.compile(r'^import\s+(?P<module>[\w./\\-]+?)(?:\.vyn)?\s*$')
 
-# Global stack to hold file lines during nested imports/executions
-_file_stack = []
+# Search path for .vyn files. Current directory is always checked first,
+# then each entry in VYN_PATH in order.
+VYN_PATH = ['packages']
+
+_file_lines_queue = None
+_file_lines_index = [0]
 
 
 def _file_input_wrapper(prompt=""):
-    global _file_stack
-    if not _file_stack:
+    global _file_lines_queue, _file_lines_index
+    if _file_lines_queue is None:
         return builtins.input(prompt)
-
-    queue, index_ref = _file_stack[-1]
-    if index_ref[0] >= len(queue):
+    if _file_lines_index[0] >= len(_file_lines_queue):
         raise EOFError()
-
-    line = queue[index_ref[0]]
-    index_ref[0] += 1
+    line = _file_lines_queue[_file_lines_index[0]]
+    _file_lines_index[0] += 1
     return line
 
 
@@ -31,38 +32,51 @@ def parse_import(line):
 
 
 def is_stdlib_import(module_name):
-    """Check if this is a standard library (from lib/ folder)"""
-    # Remove lib/ prefix if present
-    name = module_name
-    if name.startswith('lib/'):
-        name = name[4:]
-
-    # Check if corresponding file exists in lib/
-    base = os.path.dirname(__file__) if "__file__" in globals() else "."
-    lib_path = os.path.join(base, "lib", f"{name}.py")
-    
-    return os.path.exists(lib_path)
+    """Return True if module_name resolves to a file in lib/."""
+    name = get_stdlib_name(module_name)
+    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
+    return os.path.exists(os.path.join(lib_dir, f"{name}.py"))
 
 
 def get_stdlib_name(module_name):
-    """Extract clean name from lib/name or bare name"""
+    """Strip lib/ prefix if present."""
     if module_name.startswith('lib/'):
         return module_name[4:]
     return module_name
 
 
 def resolve_vyn_filename(name):
+    """
+    Resolve a module name to an existing .vyn file path.
+    Search order:
+      1. As-is (absolute path or relative to cwd)
+      2. Each directory in VYN_PATH
+    Returns the resolved path string, or None if not found.
+    """
+    # Determine the bare filename to look for
     base, ext = os.path.splitext(name)
     if ext:
         if ext.lower() != '.vyn':
             return None
-        return name
-    return f"{name}.vyn"
+        filename = name
+    else:
+        filename = f"{name}.vyn"
+
+    # 1. Current directory / absolute
+    if os.path.exists(filename):
+        return filename
+
+    # 2. VYN_PATH entries
+    for folder in VYN_PATH:
+        candidate = os.path.join(folder, filename)
+        if os.path.exists(candidate):
+            return candidate
+
+    return None
 
 
 def file_exists_vyn(name):
-    filename = resolve_vyn_filename(name)
-    return filename is not None and os.path.exists(filename)
+    return resolve_vyn_filename(name) is not None
 
 
 def open_file(path, mode='r'):
@@ -98,34 +112,34 @@ def exists(path):
 
 
 def load_vyn_file(path, execute_line, variables):
-    global _file_stack
+    global _file_lines_queue, _file_lines_index
 
     with open(path, 'r', encoding='utf-8-sig') as handle:
         all_lines = [line.rstrip('\n') for line in handle.readlines()]
 
-    queue = [line for line in all_lines if line.strip() and not line.strip().startswith('#')]
-    index_ref = [0]
-
-    _file_stack.append((queue, index_ref))
+    _file_lines_queue = [
+        line for line in all_lines
+        if line.strip() and not line.strip().startswith('#')
+    ]
+    _file_lines_index[0] = 0
 
     original_input = builtins.input
     builtins.input = _file_input_wrapper
 
     try:
         while True:
-            if index_ref[0] >= len(queue):
+            if _file_lines_index[0] >= len(_file_lines_queue):
                 break
-            line = queue[index_ref[0]]
-            index_ref[0] += 1
+            line = _file_lines_queue[_file_lines_index[0]]
+            _file_lines_index[0] += 1
             if line.strip():
                 execute_line(line, variables)
     except EOFError:
         pass
     finally:
-        if _file_stack:
-            _file_stack.pop()
-        if not _file_stack:
-            builtins.input = original_input
+        builtins.input = original_input
+        _file_lines_queue = None
+        _file_lines_index[0] = 0
 
 
 def register_io_functions(variables):

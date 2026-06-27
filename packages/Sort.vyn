@@ -1,0 +1,65 @@
+# Sort.vyn - Sorting algorithms
+import List
+
+bubbleSort = function(lst) perform
+    n = length(lst)
+    i = 0
+    whileLoop { i < n } do
+        j = 0
+        whileLoop { j < n - i - 1 } do
+            a = get(lst, j)
+            b = get(lst, j + 1)
+            IF ( a > b ) do
+                set_item(lst, j, b)
+                set_item(lst, j + 1, a)
+            end
+            j = j + 1
+        endLoop
+        i = i + 1
+    endLoop
+    return lst
+endFunc
+
+selectionSort = function(lst) perform
+    n = length(lst)
+    i = 0
+    whileLoop { i < n } do
+        minIdx = i
+        j = i + 1
+        whileLoop { j < n } do
+            a = get(lst, j)
+            b = get(lst, minIdx)
+            IF ( a < b ) do
+                minIdx = j
+            end
+            j = j + 1
+        endLoop
+        temp = get(lst, i)
+        minVal = get(lst, minIdx)
+        set_item(lst, i, minVal)
+        set_item(lst, minIdx, temp)
+        i = i + 1
+    endLoop
+    return lst
+endFunc
+
+insertionSort = function(lst) perform
+    n = length(lst)
+    i = 1
+    whileLoop { i < n } do
+        key = get(lst, i)
+        j = i - 1
+        whileLoop { j >= 0 } do
+            val = get(lst, j)
+            IF ( val > key ) do
+                set_item(lst, j + 1, val)
+                j = j - 1
+            Else do
+                j = -1
+            end
+        endLoop
+        set_item(lst, j + 1, key)
+        i = i + 1
+    endLoop
+    return lst
+endFunc

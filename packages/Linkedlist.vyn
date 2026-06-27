@@ -1,0 +1,48 @@
+# LinkedList.vyn - Singly Linked List implementation
+import List
+
+createList = function() perform
+    return create()
+endFunc
+
+addFront = function(lst, item) perform
+    return insert(lst, 0, item)
+endFunc
+
+addBack = function(lst, item) perform
+    return append(lst, item)
+endFunc
+
+removeFront = function(lst) perform
+    IF (length(lst) == 0) do
+        return NIL
+    end
+    return pop(lst, 0)
+endFunc
+
+removeBack = function(lst) perform
+    IF (length(lst) == 0) do
+        return NIL
+    end
+    return pop(lst)
+endFunc
+
+getNode = function(lst, index) perform
+    return get(lst, index)
+endFunc
+
+listSize = function(lst) perform
+    return length(lst)
+endFunc
+
+listIsEmpty = function(lst) perform
+    return length(lst) == 0
+endFunc
+
+listContains = function(lst, item) perform
+    return contains(lst, item)
+endFunc
+
+clearList = function(lst) perform
+    return clear(lst)
+endFunc

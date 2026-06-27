@@ -7,15 +7,61 @@ from loops import parse_for_header, parse_while_header, condition_truth, execute
 from conditionals import read_conditional_block, execute_conditional
 from variables import global_vars, local
 from input import parse_in_call
-from print import Printstr
 from var import assign_variable
 
 dependency.register_io_functions(global_vars.variables)
 
 
+# ---------------------------------------------------------------------------
+# Line source
+# ---------------------------------------------------------------------------
+# All block readers (IF, loops, function body) pull lines from a thread-local
+# line source instead of calling input() directly.  At the REPL the source
+# wraps input(); inside a function body it drains the pre-captured body list.
+# This is what allows IF/loop blocks inside functions to work correctly.
+
+class _LineSource:
+    """Stack of line iterators.  The top iterator is tried first; if it
+    raises StopIteration we fall back to the one below (the REPL)."""
+
+    def __init__(self):
+        self._stack = []          # list of iterators
+        self._repl_prompt = ">>> "
+
+    def push(self, lines):
+        """Push an iterable of lines (e.g. function body list)."""
+        self._stack.append(iter(lines))
+
+    def pop(self):
+        if self._stack:
+            self._stack.pop()
+
+    def readline(self, prompt=">>> "):
+        while self._stack:
+            try:
+                return next(self._stack[-1])
+            except StopIteration:
+                self._stack.pop()
+        # Nothing on the stack — read from the real REPL
+        return input(prompt)
+
+
+_source = _LineSource()
+
+
+def _read_line(prompt=">>> "):
+    """Single entry-point for all line reading in the interpreter."""
+    return _source.readline(prompt)
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+
 def strip_quotes(text):
     text = text.strip()
-    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+    if (text.startswith('"') and text.endswith('"')) or \
+       (text.startswith("'") and text.endswith("'")):
         return text[1:-1]
     return text
 
@@ -24,7 +70,7 @@ def split_top_level(text, sep):
     parts = []
     current = []
     quote = None
-    paren_depth = 0
+    depth = 0
     i = 0
     while i < len(text):
         ch = text[i]
@@ -40,16 +86,16 @@ def split_top_level(text, sep):
             i += 1
             continue
         if ch == '(':
-            paren_depth += 1
+            depth += 1
             current.append(ch)
             i += 1
             continue
         if ch == ')':
-            paren_depth -= 1
+            depth -= 1
             current.append(ch)
             i += 1
             continue
-        if paren_depth == 0 and text.startswith(sep, i):
+        if depth == 0 and text.startswith(sep, i):
             parts.append(''.join(current).strip())
             current = []
             i += len(sep)
@@ -86,6 +132,54 @@ def replace_top_level(text, old, new):
     return ''.join(result)
 
 
+# ---------------------------------------------------------------------------
+# Block readers  (use _read_line, never input() directly)
+# ---------------------------------------------------------------------------
+
+def read_block():
+    """Read lines until 'end' or 'endLoop'. Used by loops."""
+    body = []
+    while True:
+        line = _read_line()
+        if not line:
+            continue
+        if line.strip() in {"endLoop", "end"}:
+            break
+        body.append(line)
+    return body
+
+
+def read_function_body():
+    """Read lines until 'endFunc'."""
+    body = []
+    while True:
+        line = _read_line()
+        if not line:
+            continue
+        if line.strip() == 'endFunc':
+            break
+        body.append(line)
+    return body
+
+
+def _patched_read_conditional_block(first_header):
+    """
+    Wrapper around conditionals.read_conditional_block that replaces its
+    internal input() calls with _read_line so function bodies work correctly.
+    """
+    import builtins
+    original = builtins.input
+    builtins.input = _read_line
+    try:
+        return read_conditional_block(first_header)
+    finally:
+        builtins.input = original
+
+
+# ---------------------------------------------------------------------------
+# Expression evaluator
+# ---------------------------------------------------------------------------
+
 class ExpressionEvaluator(ast.NodeVisitor):
     def __init__(self, variables_map):
         self.variables = variables_map
@@ -100,8 +194,6 @@ class ExpressionEvaluator(ast.NodeVisitor):
             if isinstance(left, str) or isinstance(right, str):
                 return str(left) + str(right)
             return left + right
-        if isinstance(node.op, ast.BitAnd):
-            return str(left) + str(right)
         if isinstance(node.op, ast.Sub):
             return left - right
         if isinstance(node.op, ast.Mult):
@@ -168,15 +260,11 @@ class ExpressionEvaluator(ast.NodeVisitor):
         return self.visit(node.orelse)
 
     def visit_Name(self, node):
-        if node.id == 'true':
-            return True
-        if node.id == 'false':
-            return False
-        if node.id == 'nil':
+        if node.id == 'NIL':
             return 'NIL'
         if node.id in self.variables:
             return self.variables[node.id]
-        return 'NIL'
+        raise ValueError(f"Undefined variable '{node.id}'")
 
     def visit_Constant(self, node):
         if isinstance(node.value, str):
@@ -197,20 +285,8 @@ class ExpressionEvaluator(ast.NodeVisitor):
             return 'NIL'
         if not callable(func):
             error.not_a_function()
-
-        # Positional arguments
         args = [self.visit(arg) for arg in node.args]
-
-        # Keyword arguments (NEW)
-        kwargs = {}
-        for kw in node.keywords:
-            if kw.arg is not None:
-                kwargs[kw.arg] = self.visit(kw.value)
-
-        if kwargs:
-            return func(*args, **kwargs)
-        else:
-            return func(*args)
+        return func(*args)
 
     def generic_visit(self, node):
         error.unsupported_expression(ast.dump(node))
@@ -218,7 +294,7 @@ class ExpressionEvaluator(ast.NodeVisitor):
 
 def eval_expression(expr, vars=None):
     expr = expr.strip()
-    expr = replace_top_level(expr, '++', ' & ')
+    expr = replace_top_level(expr, '++', '+')
 
     def transform_ternary(s):
         s = s.strip()
@@ -291,42 +367,54 @@ def eval_expression(expr, vars=None):
     return evaluator.visit(tree)
 
 
-def eval_print_expression(expr):
+def eval_print_expression(expr, vars=None):
+    if vars is None:
+        vars = global_vars.variables
     expr = expr.strip()
-    if not expr:
-        return ''
     args = split_top_level(expr, ',')
     evaluated = []
     for arg in args:
-        evaluated.append(str(eval_expression(arg)))
+        evaluated.append(str(eval_expression(arg, vars)))
     return ' '.join(evaluated)
 
 
+# ---------------------------------------------------------------------------
+# Function factory
+# ---------------------------------------------------------------------------
 
-
-
-def read_block():
-    body = []
-    while True:
-        line = input(">>> ")
-        if not line:
-            continue
-        if line.strip() in {"endLoop", "end"}:
-            break
-        body.append(line)
-    return body
-
-
-def make_fn(params, body, variables):
+def make_fn(params, body, outer_vars):
     def _fn(*call_args):
-        current_vars = local.make_function_scope(params, call_args, variables)
-        for bl in body:
-            res = execute_line(bl, current_vars)
-            if isinstance(res, tuple) and res[0] == 'RETURN':
-                return res[1]
+        current_vars = local.make_function_scope(params, call_args, outer_vars)
+        # Push the pre-captured body lines as the active line source.
+        # This means any IF/loop block readers will drain from this list
+        # instead of blocking on real stdin.
+        _source.push(body)
+        try:
+            while True:
+                try:
+                    line = _read_line()
+                except StopIteration:
+                    break
+                if not line:
+                    continue
+                res = execute_line(line, current_vars)
+                if isinstance(res, tuple) and res[0] == 'RETURN':
+                    return res[1]
+                if res in ('BREAK', 'CONTINUE'):
+                    return res
+        finally:
+            # Always pop — even if an exception escapes
+            try:
+                _source.pop()
+            except Exception:
+                pass
         return None
     return _fn
 
+
+# ---------------------------------------------------------------------------
+# Main interpreter loop
+# ---------------------------------------------------------------------------
 
 def execute_line(line, variables=None):
     if variables is None:
@@ -340,13 +428,13 @@ def execute_line(line, variables=None):
         return 'BREAK'
     if stripped == 'continue':
         return 'CONTINUE'
+
     if stripped.startswith('return'):
         parts = stripped.split(None, 1)
         if len(parts) == 1:
             return ('RETURN', None)
-        expr = parts[1]
         try:
-            val = eval_expression(expr, variables)
+            val = eval_expression(parts[1], variables)
         except ValueError as exc:
             error.print_error(exc)
             return
@@ -354,30 +442,26 @@ def execute_line(line, variables=None):
 
     if stripped.startswith("forLoop"):
         body = read_block()
-        return execute_for_loop(line, body, variables, eval_expression, execute_line)
+        execute_for_loop(line, body, variables, eval_expression, execute_line)
+        return
 
     if stripped.startswith("whileLoop"):
         body = read_block()
-        return execute_while_loop(line, body, variables, eval_expression, execute_line)
+        execute_while_loop(line, body, variables, eval_expression, execute_line)
+        return
 
-    # Handle DOF("filename") - Execute file and show output
     if stripped.startswith("DOF(") and stripped.endswith(")"):
         try:
-            # Extract filename from DOF("filename")
             filename_part = stripped[4:-1].strip()
-            # Remove quotes
             if (filename_part.startswith('"') and filename_part.endswith('"')) or \
                (filename_part.startswith("'") and filename_part.endswith("'")):
                 filename = filename_part[1:-1]
             else:
                 filename = filename_part
-            
-            # Resolve and load the file
             resolved = dependency.resolve_vyn_filename(filename)
             if not resolved or not dependency.exists(resolved):
                 error.print_error_msg(f"File not found: {filename}")
                 return
-            
             print(f"\n--- Executing {filename} ---")
             dependency.load_vyn_file(resolved, execute_line, variables)
             print(f"--- Finished {filename} ---\n")
@@ -387,24 +471,22 @@ def execute_line(line, variables=None):
 
     imported = dependency.parse_import(stripped)
     if imported:
-        # Check if it's a standard library import
         if dependency.is_stdlib_import(imported):
             lib_name = dependency.get_stdlib_name(imported)
             if not library.register_library(lib_name, variables):
                 error.print_error_msg(f"Library '{lib_name}' not found")
-            return
-        
-        # Otherwise load as .vyn file
-        resolved = dependency.resolve_vyn_filename(imported)
-        if not resolved or not dependency.exists(resolved):
-            error.print_error_msg("File not found")
-            return
-        dependency.load_vyn_file(resolved, execute_line, variables)
+        else:
+            resolved = dependency.resolve_vyn_filename(imported)
+            if not resolved or not dependency.exists(resolved):
+                error.print_error_msg(f"File not found: {imported}")
+                return
+            dependency.load_vyn_file(resolved, execute_line, variables)
         return
 
     if stripped.startswith("IF"):
-        blocks = read_conditional_block(line)
-        return execute_conditional(blocks, variables, eval_expression, execute_line, condition_truth)
+        blocks = _patched_read_conditional_block(line)
+        execute_conditional(blocks, variables, eval_expression, execute_line, condition_truth)
+        return
 
     if stripped.lower().startswith('function'):
         parsed = parse_function_header(stripped)
@@ -412,14 +494,7 @@ def execute_line(line, variables=None):
             error.print_error_msg("Invalid function header")
             return
         fname, params = parsed
-        body = []
-        while True:
-            l = input('>>> ')
-            if not l:
-                continue
-            if l.strip() == 'endFunc':
-                break
-            body.append(l)
+        body = read_function_body()
         if not fname:
             error.print_error_msg("unnamed standalone function must be assigned to a variable")
             return
@@ -447,14 +522,22 @@ def execute_line(line, variables=None):
                 return
             try:
                 result = variables[fname](*evaluated)
-                if result is not None:
+                # Only auto-print at the top level (source stack is empty).
+                # Inside a function body the stack has at least one entry.
+                if result is not None and not _source._stack:
                     print(result)
             except Exception as exc:
                 error.print_function_call_error(exc)
             return
 
     if stripped.startswith("print"):
-        Printstr(line)
+        content = stripped[len("print"):].strip()
+        if content.startswith("(") and content.endswith(")"):
+            content = content[1:-1].strip()
+        try:
+            print(eval_print_expression(content, variables))
+        except ValueError as exc:
+            error.print_error(exc)
         return
 
     if stripped.startswith("IN"):
@@ -467,10 +550,14 @@ def execute_line(line, variables=None):
     print(line)
 
 
+# ---------------------------------------------------------------------------
+# REPL entry point
+# ---------------------------------------------------------------------------
+
 def start():
     while True:
         try:
-            line = input(">>> ")
+            line = _read_line()
             if not line:
                 break
             execute_line(line, global_vars.variables)
@@ -488,11 +575,6 @@ def start():
 # Calling a function:
 #   result = myFunc(3, 5)
 #   myFunc(10, 20)
-#
-# Function without name (standalone):
-#   function(a, b) perform
-#     print(a + b)
-#   endFunc
 #
 # Function with no parameters:
 #   greet = function() perform
