@@ -1,11 +1,11 @@
 import re
 import error
 
-FOR_RE = re.compile(
-    r'^forLoop\s*\{\s*(?P<init>[^;]+?)\s*;\s*(?P<cond>[^;]+?)\s*;\s*(?P<step>[^}]+?)\s*\}\s*do\s*$'
-)
+FOR_RE = re.compile(r'^forLoop\s*\{\s*(?P<init>[^;]+?)\s*;\s*(?P<cond>[^;]+?)\s*;\s*(?P<step>[^}]+?)\s*\}\s*do\s*$')
+FORIN_RE = re.compile(r'^forIn\s*\{\s*(?P<var>[A-Za-z_]\w*)\s+in\s+(?P<iter>.+?)\s*\}\s*do\s*$')
 WHILE_RE = re.compile(r'^whileLoop\s*\{\s*(?P<cond>.+?)\s*\}\s*do\s*$')
 IDENTIFIER_RE = re.compile(r'^[A-Za-z_]\w*$')
+
 
 
 def parse_for_header(line):
@@ -68,6 +68,9 @@ def read_block():
     return body
 
 
+
+
+
 def execute_for_loop(header, body_lines, variables, eval_expression, execute_line):
     try:
         init, cond, step_var, step_expr = parse_for_header(header)
@@ -125,6 +128,39 @@ def execute_while_loop(header, body_lines, variables, eval_expression, execute_l
         for body_line in body_lines:
             # FIX: pass variables so loop body uses correct scope
             res = execute_line(body_line, variables)
+            if res == 'BREAK':
+                return
+            if res == 'CONTINUE':
+                break
+            if isinstance(res, tuple) and res[0] == 'RETURN':
+                return res
+
+
+
+def parse_forin_header(line):
+    m = FORIN_RE.match(line.strip())
+    if not m:
+        return None
+    return m.group('var').strip(), m.group('iter').strip()
+
+def execute_forin_loop(header, body_lines, variables, eval_expression, execute_line):
+    parsed = parse_forin_header(header)
+    if not parsed:
+        error.print_error_msg("Invalid forIn syntax")
+        return
+    var_name, iter_expr = parsed
+    try:
+        iterable = eval_expression(iter_expr, variables)
+    except ValueError as exc:
+        error.print_error(exc)
+        return
+    if not hasattr(iterable, '__iter__'):
+        error.print_error_msg(f"'{iter_expr}' is not iterable")
+        return
+    for item in iterable:
+        variables[var_name] = item
+        for line in body_lines:
+            res = execute_line(line, variables)
             if res == 'BREAK':
                 return
             if res == 'CONTINUE':

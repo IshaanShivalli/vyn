@@ -18,6 +18,15 @@ INPUT_RE = re.compile(
 ASSIGNMENT_RE = re.compile(r'^(?P<name>[A-Za-z_]\w*)\s*=\s*(?P<expr>.+)$')
 
 variables = {}
+variables['not_in'] = lambda item, container: item not in container
+variables['in_list'] = lambda item, container: item in container
+variables['range'] = lambda *args: list(range(*[int(a) for a in args]))
+variables['len'] = lambda x: len(x)
+constants = set()
+reactive = {}
+dependencies = {}
+watchers = {}
+
 
 # GLOBAL VARIABLES MODULE: Stores and manages global variable state
 # x = 10                       - integer assignment
