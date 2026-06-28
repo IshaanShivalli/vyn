@@ -11,6 +11,7 @@ from input import parse_in_call
 from var import assign_variable, handle_augmented, handle_const
 from trycatch import is_try_header, read_try_catch, execute_try_catch
 from switch import read_switch, execute_switch, SWITCH_RE
+import lazy as lazy_module
 
 dependency.register_io_functions(global_vars.variables)
 
@@ -218,6 +219,9 @@ class ExpressionEvaluator(ast.NodeVisitor):
 
     def visit_Name(self, node):
         if node.id == 'NIL': return 'NIL'
+        # Check if it's a lazy variable that hasn't been evaluated yet
+        if lazy_module.is_lazy(node.id) and node.id not in lazy_module._lazy_evaluated:
+            return lazy_module.resolve_lazy(node.id, self.variables, eval_expression)
         if node.id in self.variables: return self.variables[node.id]
         raise ValueError(f"Undefined variable '{node.id}'")
 
@@ -432,6 +436,19 @@ def execute_line(line, variables=None):
         except ValueError as exc:
             error.print_error(exc)
         return
+    
+
+    if stripped.startswith('lazy '):
+        rest = stripped[5:].strip()
+        m = global_vars.ASSIGNMENT_RE.match(rest)
+        if not m:
+            error.print_error_msg("Invalid lazy syntax")
+            return
+        name = m.group('name')
+        expr = m.group('expr').strip()
+        # Just register — do NOT evaluate yet
+        lazy_module.register_lazy(name, expr)
+        return
 
     if stripped.startswith("forLoop"):
         # FIX: pass _read_line so block reader uses _source not raw input()
@@ -523,6 +540,89 @@ def execute_line(line, variables=None):
             error.print_error(exc)
         return
 
+    if stripped.startswith('proof '):
+        rest = stripped[6:].strip()
+        # strip quotes and 'do' from end
+        if rest.endswith(' do'):
+            rest = rest[:-3].strip()
+        if (rest.startswith('"') and rest.endswith('"')) or \
+        (rest.startswith("'") and rest.endswith("'")):
+            proof_name = rest[1:-1]
+        else:
+            proof_name = rest
+
+        # Read body until endProof
+        body = []
+        while True:
+            line = _read_line()
+            if not line:
+                continue
+            if line.strip() == 'endProof':
+                break
+            body.append(line)
+
+        # Execute body tracking passes and failures
+        passed = 0
+        failed = 0
+        errors = []
+
+        for bl in body:
+            s = bl.strip()
+            if not s or s.startswith('#'):
+                continue
+            try:
+                res = execute_line(bl, variables)
+                passed += 1
+            except AssertionError as exc:
+                failed += 1
+                errors.append(str(exc))
+            except Exception as exc:
+                failed += 1
+                errors.append(str(exc))
+
+        # Store result
+        global_vars.proof_results.append({
+            'name': proof_name,
+            'passed': passed,
+            'failed': failed,
+            'errors': errors
+        })
+
+        # Print result
+        total = passed + failed
+        status = 'PASSED' if failed == 0 else 'FAILED'
+        print(f"[PROOF] {proof_name} — {status} ({passed}/{total})")
+        for err in errors:
+            print(f"  ✗ {err}")
+        return
+
+    if stripped == 'proofReport' or stripped == 'proof_report':
+        if not global_vars.proof_results:
+            print("No proofs run")
+            return
+        total_passed = sum(p['passed'] for p in global_vars.proof_results)
+        total_failed = sum(p['failed'] for p in global_vars.proof_results)
+        total = total_passed + total_failed
+        print(f"=== Proof Report ===")
+        for p in global_vars.proof_results:
+            status = 'PASSED' if p['failed'] == 0 else 'FAILED'
+            print(f"  [{status}] {p['name']} ({p['passed']}/{p['passed']+p['failed']})")
+            for err in p['errors']:
+                print(f"    ✗ {err}")
+        print(f"  Total: {total_passed}/{total} passed")
+        return
+
+    if stripped == 'lazyList':
+        names = lazy_module.list_lazy()
+        if not names:
+            print("No lazy variables")
+        else:
+            for n in names:
+                status = "evaluated" if n in lazy_module._lazy_evaluated else "pending"
+                print(f"  {n} -> {status}")
+        return
+    
+    
     if stripped.startswith('watch '):
         rest = stripped[6:].strip()
         # strip 'do' from end
@@ -575,7 +675,7 @@ def execute_line(line, variables=None):
     if assignment:
         name = assignment.group("name")
         expr = assignment.group("expr").strip()
-        assign_variable(name, expr, variables, eval_expression, parse_in_call)
+        assign_variable(name, expr, variables, eval_expression, parse_in_call, execute_line)
         return
 
     function_call = parse_function_call(stripped)
@@ -609,6 +709,53 @@ def execute_line(line, variables=None):
                 variables['__typeof__'] = t
         except ValueError as exc:
             error.print_error(exc)
+        return
+    
+    if stripped.startswith('snapshot '):
+        snap_name = stripped[9:].strip()
+        # Deep copy current variables excluding callables and private keys
+        import copy
+        global_vars.snapshots[snap_name] = {
+            k: copy.deepcopy(v)
+            for k, v in variables.items()
+            if not callable(v) and not k.startswith('__')
+        }
+        return
+
+    if stripped.startswith('rollback '):
+        snap_name = stripped[9:].strip()
+        if snap_name not in global_vars.snapshots:
+            error.print_error_msg(f"Snapshot '{snap_name}' not found")
+            return
+        # Restore all snapshotted values
+        snap = global_vars.snapshots[snap_name]
+        for k, v in snap.items():
+            variables[k] = v
+        # Remove any variables that didn't exist at snapshot time
+        to_delete = [
+            k for k in list(variables.keys())
+            if k not in snap
+            and not callable(variables[k])
+            and not k.startswith('__')
+        ]
+        for k in to_delete:
+            del variables[k]
+        return
+
+    if stripped == 'snapshots':
+        if not global_vars.snapshots:
+            print("No snapshots")
+        else:
+            for name in global_vars.snapshots:
+                print(name)
+        return
+
+    if stripped.startswith('dropsnap '):
+        snap_name = stripped[9:].strip()
+        if snap_name in global_vars.snapshots:
+            del global_vars.snapshots[snap_name]
+        else:
+            error.print_error_msg(f"Snapshot '{snap_name}' not found")
         return
 
     if stripped.startswith("print"):

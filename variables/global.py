@@ -26,7 +26,8 @@ constants = set()
 reactive = {}
 dependencies = {}
 watchers = {}
-
+snapshots = {}
+proof_results = []
 
 # GLOBAL VARIABLES MODULE: Stores and manages global variable state
 # x = 10                       - integer assignment
