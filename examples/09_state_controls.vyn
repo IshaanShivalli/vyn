@@ -1,0 +1,27 @@
+# Locks, snapshots, rollback, ghost variables, and increments.
+counter = 1
+counter++
+print("counter:", counter)
+counter--
+print("counter:", counter)
+
+snapshot start
+counter = 99
+print("changed counter:", counter)
+rollback start
+print("rolled back counter:", counter)
+snapshots
+dropsnap start
+
+lockGroup settings counter
+lockList
+unlockGroup settings
+
+lock counter do
+  print("counter is protected in this block")
+endLock
+
+ghost secret = "temporary"
+ghostList
+print(secret)
+ghostList

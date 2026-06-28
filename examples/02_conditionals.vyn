@@ -1,0 +1,14 @@
+# IF / Elif / Else blocks.
+temperature = 29
+
+IF ( temperature > 35 ) do
+  print("hot")
+Elif { temperature >= 25 } do
+  print("warm")
+Else do
+  print("cool")
+end
+
+age = 16
+category = age >= 18 ? "adult" : "minor"
+print("category:", category)

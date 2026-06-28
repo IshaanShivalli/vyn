@@ -1,0 +1,34 @@
+# forLoop, whileLoop, repeatUntil, forIn, break, and continue.
+total = 0
+forLoop { i = 1; i <= 5; i: i + 1 } do
+  total = total + i
+endLoop
+print("sum 1..5:", total)
+
+count = 0
+whileLoop { count < 3 } do
+  count++
+  print("while count:", count)
+endLoop
+
+hits = 0
+repeatUntil { hits == 2 } do
+  hits++
+  print("repeat hit:", hits)
+endLoop
+
+forIn { item in [10, 20, 30] } do
+  print("forIn item:", item)
+endLoop
+
+forLoop { n = 1; n <= 3; n: n + 1 } do
+  print("continue loop before:", n)
+  continue
+  print("continue loop after:", n)
+endLoop
+
+forLoop { stopAt = 1; stopAt <= 3; stopAt: stopAt + 1 } do
+  print("break loop before:", stopAt)
+  break
+  print("break loop after:", stopAt)
+endLoop

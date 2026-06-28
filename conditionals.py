@@ -24,14 +24,16 @@ def is_else_header(line):
     return bool(ELSE_RE.match(line.strip()))
 
 
-def read_conditional_block(first_header):
+def read_conditional_block(first_header, readline=None):
+    if readline is None:
+        readline = lambda: input(">>> ")
     blocks = []  # list of (type, condition, body_lines)
     cond = parse_if_header(first_header)
     if cond is None:
         error.invalid_if_header()
     body = []
     while True:
-        line = input(">>> ")
+        line = readline()
         if not line:
             continue
         s = line.strip()
@@ -41,7 +43,7 @@ def read_conditional_block(first_header):
             # read else body until end
             else_body = []
             while True:
-                l2 = input(">>> ")
+                l2 = readline()
                 if not l2:
                     continue
                 if l2.strip() in {"end", "endLoop"}:

@@ -178,6 +178,31 @@ endFunc
 
 ---
 
+### Object Oriented Programming (`Class`)
+Vyn supports simple classes. A class is closed with `endClass`, and calling the class creates an object.
+
+```vyn
+Class obj Person(name, age) have
+  function greet() perform
+    return "Hello " ++ name
+  endFunc
+
+  function birthday() perform
+    this.age = this.age + 1
+    return this.age
+  endFunc
+endClass
+
+p = Person("Alice", 20)
+print(p.name)
+print(p.greet())
+print(p.birthday())
+```
+
+`Class Person(...) have` is also accepted. Constructor parameters become object fields, methods can read them directly, and methods can update fields with `this.field = value`.
+
+---
+
 ### Built-in Standard Libraries
 
 #### File I/O Functions

@@ -1,0 +1,18 @@
+# Standard libraries and .vyn packages.
+import lib/String
+import lib/math
+
+raw = "  vyn language  "
+clean = trim(raw)
+print(toUpperCase(clean))
+print("length:", length(clean))
+print("sqrt:", sqrt(49))
+print("factorial:", factorial(5))
+
+import Stack
+stack = Make()
+stack = Push(stack, "first")
+stack = Push(stack, "second")
+print("stack size:", Size(stack))
+print("stack top:", Top(stack))
+print("stack pop:", Pop(stack))

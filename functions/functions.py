@@ -17,6 +17,7 @@ from switch import read_switch, execute_switch, SWITCH_RE
 import lazy as lazy_module
 import lock as lock_module
 import ghost as ghost_module
+import oop as oop_module
 from pipeExpr import has_pipe, resolve_pipe
 
 # FIX: import time module from lib/ for timed block support
@@ -41,8 +42,8 @@ class _LineSource:
     def __init__(self):
         self._stack = []
 
-    def push(self, lines):
-        self._stack.append(iter(lines))
+    def push(self, lines, stop_at_end=False):
+        self._stack.append((iter(lines), stop_at_end))
 
     def pop(self):
         if self._stack:
@@ -51,9 +52,12 @@ class _LineSource:
     def readline(self, prompt=">>> "):
         while self._stack:
             try:
-                return next(self._stack[-1])
+                return next(self._stack[-1][0])
             except StopIteration:
+                _, stop_at_end = self._stack[-1]
                 self._stack.pop()
+                if stop_at_end:
+                    raise
         return input(prompt)
 
     def at_top_level(self):
@@ -134,7 +138,7 @@ def _run_body(body, variables):
     Previously these blocks used plain 'for bl in body' loops
     which bypassed _source, causing nested blocks to hang on input().
     """
-    _source.push(body)
+    _source.push(body, stop_at_end=True)
     try:
         while True:
             try:
@@ -171,6 +175,10 @@ def read_function_body():
 
 def _read_conditional_block(first_header):
     return read_conditional_block(first_header, readline=_read_line)
+
+
+def read_class_body():
+    return oop_module.read_class_body(_read_line)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +264,15 @@ class ExpressionEvaluator(ast.NodeVisitor):
         if node.id in self.variables: return self.variables[node.id]
         raise ValueError(f"Undefined variable '{node.id}'")
 
+    def visit_Attribute(self, node):
+        obj = self.visit(node.value)
+        if isinstance(obj, oop_module.VynObject):
+            return obj.get_attr(node.attr)
+        try:
+            return getattr(obj, node.attr)
+        except AttributeError:
+            return 'NIL'
+
     def visit_Constant(self, node):
         if isinstance(node.value, (str, int, float, bool)): return node.value
         error.unsupported_constant(node.value)
@@ -267,7 +284,8 @@ class ExpressionEvaluator(ast.NodeVisitor):
         if isinstance(node.func, ast.Name) and node.func.id == 'typeof':
             val = self.visit(node.args[0])
             mapping = {'list':'list','dict':'dict','tuple':'tuple',
-                       'bool':'bool','int':'int','float':'float','str':'str'}
+                       'bool':'bool','int':'int','float':'float','str':'str',
+                       'VynObject':'object','VynClass':'class'}
             return mapping.get(type(val).__name__, 'unknown')
         if isinstance(node.func, ast.Name) and node.func.id == 'not_in':
             return self.visit(node.args[0]) not in self.visit(node.args[1])
@@ -360,7 +378,7 @@ def make_fn(params, body, outer_vars):
                 return None
         current_vars = local.make_function_scope(
             list(local_vars.keys()), list(local_vars.values()), outer_vars)
-        _source.push(body)
+        _source.push(body, stop_at_end=True)
         try:
             while True:
                 try:
@@ -422,6 +440,19 @@ def execute_line(line, variables=None):
         except Exception: val = stripped[6:].strip()
         raise RuntimeError(str(val))
 
+    attribute_assignment = oop_module.parse_attribute_assignment(stripped)
+    if attribute_assignment:
+        object_name, field_name, expr = attribute_assignment
+        try:
+            obj = eval_expression(object_name, variables)
+            if not isinstance(obj, oop_module.VynObject):
+                error.print_error_msg(f"'{object_name}' is not an object")
+                return
+            obj.set_attr(field_name, eval_expression(expr, variables))
+        except ValueError as exc:
+            error.print_error(exc)
+        return
+
     if stripped.startswith('assert '):
         rest = stripped[7:].strip()
         if ',' in rest:
@@ -455,35 +486,29 @@ def execute_line(line, variables=None):
 
     if stripped.startswith("forLoop"):
         body = read_block(readline=_read_line)
-        execute_for_loop(line, body, variables, eval_expression, execute_line)
-        return
+        return execute_for_loop(line, body, variables, eval_expression, execute_line)
 
     if stripped.startswith("whileLoop"):
         body = read_block(readline=_read_line)
-        execute_while_loop(line, body, variables, eval_expression, execute_line)
-        return
+        return execute_while_loop(line, body, variables, eval_expression, execute_line)
 
     if stripped.startswith("repeatUntil"):
         body = read_block(readline=_read_line)
-        execute_repeatuntil_loop(line, body, variables, eval_expression, execute_line)
-        return
+        return execute_repeatuntil_loop(line, body, variables, eval_expression, execute_line)
 
     if stripped.startswith("forIn"):
         body = read_block(readline=_read_line)
-        execute_forin_loop(line, body, variables, eval_expression, execute_line)
-        return
+        return execute_forin_loop(line, body, variables, eval_expression, execute_line)
 
     if is_try_header(stripped):
         try_body, catch_var, catch_body = read_try_catch(_read_line)
-        execute_try_catch(try_body, catch_var, catch_body, variables, execute_line)
-        return
+        return execute_try_catch(try_body, catch_var, catch_body, variables, execute_line)
 
     if SWITCH_RE.match(stripped):
         m = SWITCH_RE.match(stripped)
         expr_val = eval_expression(m.group('expr'), variables)
         cases, default_body = read_switch(_read_line)
-        execute_switch(expr_val, cases, default_body, variables, execute_line, eval_expression)
-        return
+        return execute_switch(expr_val, cases, default_body, variables, execute_line, eval_expression)
 
     if stripped.startswith("DOF(") and stripped.endswith(")"):
         try:
@@ -591,7 +616,17 @@ def execute_line(line, variables=None):
 
     if stripped.startswith("IF"):
         blocks = _read_conditional_block(line)
-        execute_conditional(blocks, variables, eval_expression, execute_line, condition_truth)
+        return execute_conditional(blocks, variables, eval_expression, execute_line, condition_truth)
+
+    if stripped.startswith("Class"):
+        parsed = oop_module.parse_class_header(stripped)
+        if not parsed:
+            error.print_error_msg("Invalid class syntax")
+            return
+        class_name, params = parsed
+        body = read_class_body()
+        variables[class_name] = oop_module.make_class(
+            class_name, params, body, variables, eval_expression, _run_body)
         return
 
     if stripped.lower().startswith('function'):
@@ -761,11 +796,21 @@ def execute_line(line, variables=None):
             except Exception as exc: error.print_function_call_error(exc)
             return
 
+    if re.match(r'^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\s*\(.*\)\s*$', stripped):
+        try:
+            result = eval_expression(stripped, variables)
+            if result is not None and _source.at_top_level():
+                print(result)
+        except ValueError as exc:
+            error.print_error(exc)
+        return
+
     if stripped.startswith("typeof(") and stripped.endswith(")"):
         try:
             val = eval_expression(stripped[7:-1].strip(), variables)
             mapping = {'list':'list','dict':'dict','tuple':'tuple',
-                       'bool':'bool','int':'int','float':'float','str':'str'}
+                       'bool':'bool','int':'int','float':'float','str':'str',
+                       'VynObject':'object','VynClass':'class'}
             t = mapping.get(type(val).__name__, 'unknown')
             if _source.at_top_level(): print(t)
             else: variables['__typeof__'] = t

@@ -117,6 +117,8 @@ def load_vyn_file(path, execute_line, variables):
     with open(path, 'r', encoding='utf-8-sig') as handle:
         all_lines = [line.rstrip('\n') for line in handle.readlines()]
 
+    previous_queue = _file_lines_queue
+    previous_index = _file_lines_index[0]
     _file_lines_queue = [
         line for line in all_lines
         if line.strip() and not line.strip().startswith('#')
@@ -138,8 +140,8 @@ def load_vyn_file(path, execute_line, variables):
         pass
     finally:
         builtins.input = original_input
-        _file_lines_queue = None
-        _file_lines_index[0] = 0
+        _file_lines_queue = previous_queue
+        _file_lines_index[0] = previous_index
 
 
 def register_io_functions(variables):

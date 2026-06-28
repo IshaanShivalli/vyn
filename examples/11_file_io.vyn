@@ -1,0 +1,13 @@
+# File I/O helpers. This writes examples/example_output.txt.
+path = "examples/example_output.txt"
+handle = open_file(path, "w")
+written = write_file(handle, "Hello from Vyn file IO")
+close_file(handle)
+
+reader = open_file(path, "r")
+content = read_file(reader)
+close_file(reader)
+
+print("file exists:", exists(path))
+print("bytes written:", written)
+print("file content:", content)

@@ -1,0 +1,20 @@
+# Variables and basic expressions.
+name = "Vyn"
+version = 1
+score = 7 + 3 * 2
+power = 2 ** 5
+remainder = 17 % 5
+message = "Hello " ++ name
+status = score >= 10 ? "ready" : "waiting"
+items = [1, 2, 3]
+profile = {"name": "Ishaan", "level": 5}
+
+print("message:", message)
+print("score:", score)
+print("power:", power)
+print("remainder:", remainder)
+print("status:", status)
+print("first item:", items[0])
+print("profile level:", profile["level"])
+print("typeof score:", typeof(score))
+print("typeof items:", typeof(items))

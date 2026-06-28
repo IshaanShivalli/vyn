@@ -1,0 +1,12 @@
+# Run all non-interactive examples.
+DOF("examples/01_basics.vyn")
+DOF("examples/02_conditionals.vyn")
+DOF("examples/03_loops.vyn")
+DOF("examples/04_functions.vyn")
+DOF("examples/05_oop.vyn")
+DOF("examples/06_switch_trycatch.vyn")
+DOF("examples/07_libraries_packages.vyn")
+DOF("examples/08_reactive_lazy_watch.vyn")
+DOF("examples/09_state_controls.vyn")
+DOF("examples/10_proofs_timed.vyn")
+DOF("examples/11_file_io.vyn")

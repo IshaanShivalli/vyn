@@ -1,0 +1,43 @@
+# Object oriented programming.
+Class obj Person(name, age) have
+  function greet() perform
+    return "Hello " ++ name
+  endFunc
+
+  function birthday() perform
+    this.age = this.age + 1
+    return this.age
+  endFunc
+
+  function label() perform
+    IF ( age >= 18 ) do
+      return name ++ " is an adult"
+    Else do
+      return name ++ " is a minor"
+    end
+  endFunc
+endClass
+
+person = Person("Alice", 20)
+print(person.name)
+person.greet()
+person.birthday()
+print(person.age)
+print(person.label())
+print(typeof(Person))
+print(typeof(person))
+
+Class Box(value) have
+  function get() perform
+    return value
+  endFunc
+
+  function set(newValue) perform
+    this.value = newValue
+    return this.value
+  endFunc
+endClass
+
+box = Box(7)
+print(box.get())
+print(box.set(12))

@@ -1,0 +1,31 @@
+# Named functions, assigned functions, defaults, lambdas, and nested returns.
+function add(a, b) perform
+  return a + b
+endFunc
+
+multiply = function(a, b) perform
+  return a * b
+endFunc
+
+function greet(name, greeting = "Hello") perform
+  return greeting ++ " " ++ name
+endFunc
+
+function sign(value) perform
+  IF ( value > 0 ) do
+    return "positive"
+  Elif { value == 0 } do
+    return "zero"
+  Else do
+    return "negative"
+  end
+endFunc
+
+double = lambda x: x * 2
+
+print("add:", add(2, 3))
+print("multiply:", multiply(4, 5))
+print(greet("Vyn"))
+print(greet("Vyn", "Hi"))
+print("sign:", sign(-4))
+print("double:", double(9))

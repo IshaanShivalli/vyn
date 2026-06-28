@@ -1,0 +1,20 @@
+# Reactive variables, lazy values, and watchers.
+price = 10
+qty = 2
+react total = price * qty
+print("total:", total)
+
+price = 12
+print("updated total:", total)
+
+lazy delayed = price + qty + 100
+lazyList
+print("delayed:", delayed)
+lazyList
+
+watch qty do
+  print("qty changed:", qty)
+endWatch
+
+qty = 5
+print("watched total:", total)

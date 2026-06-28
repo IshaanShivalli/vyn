@@ -1,0 +1,17 @@
+# switch/case/default and try/catch.
+grade = "B"
+
+switch ( grade ) do
+case "A" do
+  print("excellent")
+case "B" do
+  print("good")
+default do
+  print("keep practicing")
+endSwitch
+
+try do
+  throw "planned failure"
+catch err do
+  print("caught:", err)
+end
