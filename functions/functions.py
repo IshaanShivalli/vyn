@@ -1,5 +1,6 @@
 import ast
 import re
+import copy
 import error
 import dependency
 import library
@@ -17,10 +18,19 @@ import lazy as lazy_module
 import lock as lock_module
 import ghost as ghost_module
 from pipeExpr import has_pipe, resolve_pipe
-import timed as timed_module
+
+# FIX: import time module from lib/ for timed block support
+import importlib.util as _ilu
+import os as _os
+_timed_spec = _ilu.spec_from_file_location(
+    "vyn_time",
+    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'time.py')
+)
+timed_module = _ilu.module_from_spec(_timed_spec)
+_timed_spec.loader.exec_module(timed_module)
+
 dependency.register_io_functions(global_vars.variables)
 
-# FIX: LAMBDA_RE at module level, not recompiled on every eval_expression call
 LAMBDA_RE = re.compile(r'^lambda\s+(?P<params>[\w,\s]*)\s*:\s*(?P<expr>.+)$')
 
 # ---------------------------------------------------------------------------
@@ -76,8 +86,7 @@ def split_top_level(text, sep):
         ch = text[i]
         if quote:
             current.append(ch)
-            if ch == quote:
-                quote = None
+            if ch == quote: quote = None
             i += 1; continue
         if ch in ('"', "'"):
             quote = ch; current.append(ch); i += 1; continue
@@ -117,14 +126,36 @@ def interpolate(s, variables, eval_expr):
     return re.sub(r'\{([^}]+)\}', replacer, s)
 
 
+def _run_body(body, variables):
+    """
+    FIX: Push body onto _source and drain it via execute_line.
+    Used by proof, watch, lock, timed blocks so that nested
+    forLoop/whileLoop/IF inside them work correctly.
+    Previously these blocks used plain 'for bl in body' loops
+    which bypassed _source, causing nested blocks to hang on input().
+    """
+    _source.push(body)
+    try:
+        while True:
+            try:
+                line = _read_line()
+            except StopIteration:
+                break
+            if not line:
+                continue
+            res = execute_line(line, variables)
+            if isinstance(res, tuple) and res[0] == 'RETURN':
+                return res
+            if res in ('BREAK', 'CONTINUE'):
+                return res
+    finally:
+        _source.pop()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Block readers
 # ---------------------------------------------------------------------------
-
-def _read_block():
-    # FIX: always use _read_line, never raw input()
-    return read_block(readline=_read_line)
-
 
 def read_function_body():
     body = []
@@ -139,9 +170,6 @@ def read_function_body():
 
 
 def _read_conditional_block(first_header):
-    # FIX: pass _read_line directly instead of patching builtins.input
-    # Patching caused infinite recursion because _read_line calls input()
-    # when the stack is empty, and patching input = _read_line made it recursive
     return read_conditional_block(first_header, readline=_read_line)
 
 
@@ -153,14 +181,13 @@ class ExpressionEvaluator(ast.NodeVisitor):
     def __init__(self, variables_map):
         self.variables = variables_map
 
-    def visit_Expression(self, node):
-        return self.visit(node.body)
+    def visit_Expression(self, node): return self.visit(node.body)
 
     def visit_BinOp(self, node):
         left, right = self.visit(node.left), self.visit(node.right)
         op = node.op
         if isinstance(op, ast.Add):
-            return str(left) + str(right) if isinstance(left, str) or isinstance(right, str) else left + right
+            return str(left)+str(right) if isinstance(left,str) or isinstance(right,str) else left+right
         if isinstance(op, ast.Sub):  return left - right
         if isinstance(op, ast.Mult): return left * right
         if isinstance(op, ast.Div):  return left / right
@@ -205,39 +232,27 @@ class ExpressionEvaluator(ast.NodeVisitor):
     def visit_IfExp(self, node):
         return self.visit(node.body) if self.visit(node.test) else self.visit(node.orelse)
 
-    def visit_List(self, node):
-        return [self.visit(el) for el in node.elts]
-
-    def visit_Tuple(self, node):
-        return tuple(self.visit(el) for el in node.elts)
-
+    def visit_List(self, node): return [self.visit(el) for el in node.elts]
+    def visit_Tuple(self, node): return tuple(self.visit(el) for el in node.elts)
     def visit_Dict(self, node):
         return {self.visit(k): self.visit(v) for k, v in zip(node.keys, node.values)}
 
     def visit_Subscript(self, node):
         obj = self.visit(node.value)
         idx = self.visit(node.slice)
-        try:
-            return obj[idx]
-        except (IndexError, KeyError):
-            return 'NIL'
+        try: return obj[idx]
+        except (IndexError, KeyError): return 'NIL'
 
     def visit_Name(self, node):
         if node.id == 'NIL': return 'NIL'
-
-        # Ghost variable check
         if ghost_module.is_ghost(node.id):
             if ghost_module.is_expired(node.id):
                 raise ValueError(f"Ghost variable '{node.id}' has expired")
             value = ghost_module.resolve_ghost(node.id)
-            # Remove from variables after access
             self.variables.pop(node.id, None)
             return value
-
-        # Lazy variable check
         if lazy_module.is_lazy(node.id) and node.id not in lazy_module._lazy_evaluated:
             return lazy_module.resolve_lazy(node.id, self.variables, eval_expression)
-
         if node.id in self.variables: return self.variables[node.id]
         raise ValueError(f"Undefined variable '{node.id}'")
 
@@ -248,23 +263,14 @@ class ExpressionEvaluator(ast.NodeVisitor):
     def visit_Num(self, node): return node.n
     def visit_Str(self, node): return node.s
 
-    # FIX: single visit_Call that handles typeof, not_in, and general calls
-    # Previously two visit_Call methods were defined — Python silently drops
-    # the first one, so not_in and typeof handling never ran
     def visit_Call(self, node):
-        # typeof handled before function lookup
         if isinstance(node.func, ast.Name) and node.func.id == 'typeof':
             val = self.visit(node.args[0])
-            mapping = {'list': 'list', 'dict': 'dict', 'tuple': 'tuple',
-                       'bool': 'bool', 'int': 'int', 'float': 'float', 'str': 'str'}
+            mapping = {'list':'list','dict':'dict','tuple':'tuple',
+                       'bool':'bool','int':'int','float':'float','str':'str'}
             return mapping.get(type(val).__name__, 'unknown')
-
-        # not_in handled before function lookup
         if isinstance(node.func, ast.Name) and node.func.id == 'not_in':
-            item = self.visit(node.args[0])
-            container = self.visit(node.args[1])
-            return item not in container
-
+            return self.visit(node.args[0]) not in self.visit(node.args[1])
         func = self.visit(node.func)
         if func == 'NIL': return 'NIL'
         if not callable(func): error.not_a_function()
@@ -278,17 +284,12 @@ def eval_expression(expr, vars=None):
     expr = expr.strip()
     expr = replace_top_level(expr, '++', '+')
 
-    # FIX: try_parse_lambda is now actually called
     m = LAMBDA_RE.match(expr)
     if m:
-        params_raw = [p.strip() for p in m.group('params').split(',') if p.strip()]
-        params = [(p, None) for p in params_raw]
-        body_line = f'return {m.group("expr").strip()}'
-        if vars is None:
-            vars = global_vars.variables
-        return make_fn(params, [body_line], vars)
+        params = [(p.strip(), None) for p in m.group('params').split(',') if p.strip()]
+        if vars is None: vars = global_vars.variables
+        return make_fn(params, [f'return {m.group("expr").strip()}'], vars)
 
-    # Pipeline operator
     if has_pipe(expr):
         return resolve_pipe(expr, eval_expression, vars)
 
@@ -304,7 +305,7 @@ def eval_expression(expr, vars=None):
             if ch == '(': depth += 1; i += 1; continue
             if ch == ')': depth -= 1; i += 1; continue
             if ch == '?' and depth == 0:
-                qpos = i; j, q, d = i + 1, None, 0
+                qpos = i; j, q, d = i+1, None, 0
                 while j < len(s):
                     cj = s[j]
                     if q:
@@ -314,7 +315,7 @@ def eval_expression(expr, vars=None):
                     if cj == '(': d += 1; j += 1; continue
                     if cj == ')': d -= 1; j += 1; continue
                     if cj == ':' and d == 0:
-                        cond      = s[:qpos].strip()
+                        cond = s[:qpos].strip()
                         true_part = s[qpos+1:j].strip()
                         false_part = s[j+1:].strip()
                         return transform_ternary(f"({true_part}) if ({cond}) else ({false_part})")
@@ -324,6 +325,7 @@ def eval_expression(expr, vars=None):
         return s
 
     expr = transform_ternary(expr)
+    # FIX: re already imported at module level, no need to import inside function
     expr = re.sub(r'\bnot\s+in\b', 'not_in', expr)
 
     try:
@@ -331,14 +333,12 @@ def eval_expression(expr, vars=None):
     except SyntaxError:
         error.invalid_expression(expr)
 
-    if vars is None:
-        vars = global_vars.variables
+    if vars is None: vars = global_vars.variables
     return ExpressionEvaluator(vars).visit(tree)
 
 
 def eval_print_expression(expr, vars=None):
-    if vars is None:
-        vars = global_vars.variables
+    if vars is None: vars = global_vars.variables
     return ' '.join(str(eval_expression(a, vars))
                     for a in split_top_level(expr.strip(), ','))
 
@@ -348,25 +348,18 @@ def eval_print_expression(expr, vars=None):
 # ---------------------------------------------------------------------------
 
 def make_fn(params, body, outer_vars):
-    """
-    params: list of (name, default_expr_or_None)
-    body:   list of line strings
-    """
     def _fn(*call_args):
         local_vars = {}
         for i, (name, default) in enumerate(params):
             if i < len(call_args):
                 local_vars[name] = call_args[i]
             elif default is not None:
-                # FIX: eval default against outer scope
                 local_vars[name] = eval_expression(default, outer_vars)
             else:
                 error.print_error_msg(f"Missing argument '{name}'")
                 return None
-        # FIX: use make_function_scope (which exists) not make_function_scope_from_dict
-        current_vars = local.make_function_scope(list(local_vars.keys()),
-                                                  list(local_vars.values()),
-                                                  outer_vars)
+        current_vars = local.make_function_scope(
+            list(local_vars.keys()), list(local_vars.values()), outer_vars)
         _source.push(body)
         try:
             while True:
@@ -374,8 +367,7 @@ def make_fn(params, body, outer_vars):
                     line = _read_line()
                 except StopIteration:
                     break
-                if not line:
-                    continue
+                if not line: continue
                 res = execute_line(line, current_vars)
                 if isinstance(res, tuple) and res[0] == 'RETURN':
                     return res[1]
@@ -396,54 +388,38 @@ def execute_line(line, variables=None):
         variables = global_vars.variables
 
     stripped = line.strip()
-    if not stripped:
-        return
+    if not stripped: return
 
-    # Augmented assignment: +=, -=, *=, /=
-    if handle_augmented(stripped, variables, eval_expression):
-        return
+    if handle_augmented(stripped, variables, eval_expression): return
 
     if stripped == 'break':    return 'BREAK'
     if stripped == 'continue': return 'CONTINUE'
 
-    # ++/--
     if stripped.endswith('++'):
         name = stripped[:-2].strip()
         if lock_module.is_locked(name):
-            error.print_error_msg(f"Cannot modify '{name}' — variable is locked")
-            return
-        if name in variables:
-            variables[name] = variables[name] + 1
-        else:
-            error.print_error_msg(f"Undefined variable '{name}'")
+            error.print_error_msg(f"Cannot modify '{name}' — variable is locked"); return
+        if name in variables: variables[name] += 1
+        else: error.print_error_msg(f"Undefined variable '{name}'")
         return
 
     if stripped.endswith('--'):
         name = stripped[:-2].strip()
         if lock_module.is_locked(name):
-            error.print_error_msg(f"Cannot modify '{name}' — variable is locked")
-            return
-        if name in variables:
-            variables[name] = variables[name] - 1
-        else:
-            error.print_error_msg(f"Undefined variable '{name}'")
+            error.print_error_msg(f"Cannot modify '{name}' — variable is locked"); return
+        if name in variables: variables[name] -= 1
+        else: error.print_error_msg(f"Undefined variable '{name}'")
         return
 
     if stripped.startswith('return'):
         parts = stripped.split(None, 1)
-        if len(parts) == 1:
-            return ('RETURN', None)
-        try:
-            return ('RETURN', eval_expression(parts[1], variables))
-        except ValueError as exc:
-            error.print_error(exc)
-            return
+        if len(parts) == 1: return ('RETURN', None)
+        try: return ('RETURN', eval_expression(parts[1], variables))
+        except ValueError as exc: error.print_error(exc); return
 
     if stripped.startswith('throw '):
-        try:
-            val = eval_expression(stripped[6:].strip(), variables)
-        except Exception:
-            val = stripped[6:].strip()
+        try: val = eval_expression(stripped[6:].strip(), variables)
+        except Exception: val = stripped[6:].strip()
         raise RuntimeError(str(val))
 
     if stripped.startswith('assert '):
@@ -457,37 +433,36 @@ def execute_line(line, variables=None):
         try:
             if not eval_expression(cond_expr.strip(), variables):
                 raise AssertionError(str(eval_expression(msg_expr, variables)))
-        except (AssertionError, RuntimeError):
-            raise
-        except ValueError as exc:
-            error.print_error(exc)
+        except (AssertionError, RuntimeError): raise
+        except ValueError as exc: error.print_error(exc)
         return
-    
 
     if stripped.startswith('lazy '):
         rest = stripped[5:].strip()
         m = global_vars.ASSIGNMENT_RE.match(rest)
-        if not m:
-            error.print_error_msg("Invalid lazy syntax")
-            return
-        name = m.group('name')
-        expr = m.group('expr').strip()
-        # Just register — do NOT evaluate yet
-        lazy_module.register_lazy(name, expr)
+        if not m: error.print_error_msg("Invalid lazy syntax"); return
+        lazy_module.register_lazy(m.group('name'), m.group('expr').strip())
+        return
+
+    if stripped == 'lazyList':
+        names = lazy_module.list_lazy()
+        if not names: print("No lazy variables")
+        else:
+            for n in names:
+                status = "evaluated" if n in lazy_module._lazy_evaluated else "pending"
+                print(f"  {n} -> {status}")
         return
 
     if stripped.startswith("forLoop"):
-        # FIX: pass _read_line so block reader uses _source not raw input()
         body = read_block(readline=_read_line)
         execute_for_loop(line, body, variables, eval_expression, execute_line)
         return
 
     if stripped.startswith("whileLoop"):
-        # FIX: same
         body = read_block(readline=_read_line)
         execute_while_loop(line, body, variables, eval_expression, execute_line)
         return
-    
+
     if stripped.startswith("repeatUntil"):
         body = read_block(readline=_read_line)
         execute_repeatuntil_loop(line, body, variables, eval_expression, execute_line)
@@ -497,8 +472,6 @@ def execute_line(line, variables=None):
         body = read_block(readline=_read_line)
         execute_forin_loop(line, body, variables, eval_expression, execute_line)
         return
-
-
 
     if is_try_header(stripped):
         try_body, catch_var, catch_body = read_try_catch(_read_line)
@@ -524,8 +497,7 @@ def execute_line(line, variables=None):
             print(f"\n--- Executing {fp} ---")
             dependency.load_vyn_file(resolved, execute_line, variables)
             print(f"--- Finished {fp} ---\n")
-        except Exception as exc:
-            error.print_error(exc)
+        except Exception as exc: error.print_error(exc)
         return
 
     imported = dependency.parse_import(stripped)
@@ -544,155 +516,87 @@ def execute_line(line, variables=None):
     if stripped.startswith('react '):
         rest = stripped[6:].strip()
         m = global_vars.ASSIGNMENT_RE.match(rest)
-        if not m:
-            error.print_error_msg("Invalid react syntax")
-            return
+        if not m: error.print_error_msg("Invalid react syntax"); return
         name = m.group('name')
         expr = m.group('expr').strip()
-
-        # Store the expression
         global_vars.reactive[name] = expr
-
-        # Parse dependencies — any identifier in the expression
-        import re
+        # FIX: re already imported at top, no need to import inside execute_line
         deps = set(re.findall(r'\b[A-Za-z_]\w*\b', expr))
-        # Remove keywords and the name itself
-        skip = {'and', 'or', 'not', 'true', 'false', 'NIL', name}
-        deps -= skip
-
-        # Register this reactive var under each dependency
+        deps -= {'and', 'or', 'not', 'true', 'false', 'NIL', name}
         for dep in deps:
-            if dep not in global_vars.dependencies:
-                global_vars.dependencies[dep] = set()
-            global_vars.dependencies[dep].add(name)
+            global_vars.dependencies.setdefault(dep, set()).add(name)
+        try: variables[name] = eval_expression(expr, variables)
+        except ValueError as exc: error.print_error(exc)
+        return
 
-        # Evaluate immediately for initial value
-        try:
-            variables[name] = eval_expression(expr, variables)
-        except ValueError as exc:
-            error.print_error(exc)
+    if stripped.startswith('watch '):
+        rest = stripped[6:].strip()
+        if not rest.endswith(' do'):
+            error.print_error_msg("Invalid watch syntax, expected: watch x do"); return
+        var_name = rest[:-3].strip()
+        body = []
+        while True:
+            line = _read_line()
+            if not line: continue
+            if line.strip() == 'endWatch': break
+            body.append(line)
+        global_vars.watchers.setdefault(var_name, []).append(body)
         return
 
     if stripped.startswith('proof '):
         rest = stripped[6:].strip()
-        # strip quotes and 'do' from end
-        if rest.endswith(' do'):
-            rest = rest[:-3].strip()
+        if rest.endswith(' do'): rest = rest[:-3].strip()
         if (rest.startswith('"') and rest.endswith('"')) or \
-        (rest.startswith("'") and rest.endswith("'")):
+           (rest.startswith("'") and rest.endswith("'")):
             proof_name = rest[1:-1]
         else:
             proof_name = rest
-
-        # Read body until endProof
         body = []
         while True:
             line = _read_line()
-            if not line:
-                continue
-            if line.strip() == 'endProof':
-                break
+            if not line: continue
+            if line.strip() == 'endProof': break
             body.append(line)
-
-        # Execute body tracking passes and failures
-        passed = 0
-        failed = 0
-        errors = []
-
+        passed, failed, errors = 0, 0, []
+        # FIX: use _run_body so nested loops/IFs inside proof work correctly
         for bl in body:
             s = bl.strip()
-            if not s or s.startswith('#'):
-                continue
+            if not s or s.startswith('#'): continue
             try:
-                res = execute_line(bl, variables)
+                _run_body([bl], variables)
                 passed += 1
             except AssertionError as exc:
-                failed += 1
-                errors.append(str(exc))
+                failed += 1; errors.append(str(exc))
             except Exception as exc:
-                failed += 1
-                errors.append(str(exc))
-
-        # Store result
-        global_vars.proof_results.append({
-            'name': proof_name,
-            'passed': passed,
-            'failed': failed,
-            'errors': errors
-        })
-
-        # Print result
+                failed += 1; errors.append(str(exc))
+        global_vars.proof_results.append(
+            {'name': proof_name, 'passed': passed, 'failed': failed, 'errors': errors})
         total = passed + failed
         status = 'PASSED' if failed == 0 else 'FAILED'
         print(f"[PROOF] {proof_name} — {status} ({passed}/{total})")
-        for err in errors:
-            print(f"  ✗ {err}")
+        for err in errors: print(f"  ✗ {err}")
         return
 
-    if stripped == 'proofReport' or stripped == 'proof_report':
-        if not global_vars.proof_results:
-            print("No proofs run")
-            return
-        total_passed = sum(p['passed'] for p in global_vars.proof_results)
-        total_failed = sum(p['failed'] for p in global_vars.proof_results)
-        total = total_passed + total_failed
-        print(f"=== Proof Report ===")
+    if stripped in ('proofReport', 'proof_report'):
+        if not global_vars.proof_results: print("No proofs run"); return
+        total_p = sum(p['passed'] for p in global_vars.proof_results)
+        total_f = sum(p['failed'] for p in global_vars.proof_results)
+        print("=== Proof Report ===")
         for p in global_vars.proof_results:
             status = 'PASSED' if p['failed'] == 0 else 'FAILED'
             print(f"  [{status}] {p['name']} ({p['passed']}/{p['passed']+p['failed']})")
-            for err in p['errors']:
-                print(f"    ✗ {err}")
-        print(f"  Total: {total_passed}/{total} passed")
-        return
-
-    if stripped == 'lazyList':
-        names = lazy_module.list_lazy()
-        if not names:
-            print("No lazy variables")
-        else:
-            for n in names:
-                status = "evaluated" if n in lazy_module._lazy_evaluated else "pending"
-                print(f"  {n} -> {status}")
-        return
-    
-    
-    if stripped.startswith('watch '):
-        rest = stripped[6:].strip()
-        # strip 'do' from end
-        if rest.endswith(' do'):
-            var_name = rest[:-3].strip()
-        else:
-            error.print_error_msg("Invalid watch syntax, expected: watch x do")
-            return
-
-        # Read body until endWatch
-        body = []
-        while True:
-            line = _read_line()
-            if not line:
-                continue
-            if line.strip() == 'endWatch':
-                break
-            body.append(line)
-
-        # Register the watcher
-        if var_name not in global_vars.watchers:
-            global_vars.watchers[var_name] = []
-        global_vars.watchers[var_name].append(body)
+            for err in p['errors']: print(f"    ✗ {err}")
+        print(f"  Total: {total_p}/{total_p+total_f} passed")
         return
 
     if stripped.startswith("IF"):
-        # FIX: use _read_conditional_block which passes _read_line directly
-        # Old _patched version set builtins.input=_read_line which caused
-        # infinite recursion since _read_line itself calls input()
         blocks = _read_conditional_block(line)
         execute_conditional(blocks, variables, eval_expression, execute_line, condition_truth)
         return
 
     if stripped.lower().startswith('function'):
         parsed = parse_function_header(stripped)
-        if not parsed:
-            error.print_error_msg("Invalid function header"); return
+        if not parsed: error.print_error_msg("Invalid function header"); return
         fname, params = parsed
         body = read_function_body()
         if not fname:
@@ -700,109 +604,70 @@ def execute_line(line, variables=None):
         variables[fname] = make_fn(params, body, variables)
         return
 
-    # const before assignment so 'const x = 5' isn't caught by ASSIGNMENT_RE
-    if handle_const(stripped, variables, eval_expression, parse_in_call):
-        return
+    if handle_const(stripped, variables, eval_expression, parse_in_call): return
 
     if stripped.startswith('lock ') and stripped.endswith(' do'):
-        # Extract variable names between 'lock' and 'do'
-        # Supports: lock x do  OR  lock x, y, z do
         rest = stripped[5:-3].strip()
         names = [n.strip() for n in rest.split(',') if n.strip()]
-
-        # Lock all variables
-        for name in names:
-            lock_module.lock(name)
-
-        # Read body until endLock
         body = []
         while True:
             line = _read_line()
-            if not line:
-                continue
-            if line.strip() == 'endLock':
-                break
+            if not line: continue
+            if line.strip() == 'endLock': break
             body.append(line)
-
-        # Execute body with locks active
+        for name in names: lock_module.lock(name)
         try:
-            for bl in body:
-                res = execute_line(bl, variables)
-                if isinstance(res, tuple) and res[0] == 'RETURN':
-                    return res
-                if res in ('BREAK', 'CONTINUE'):
-                    return res
+            # FIX: use _run_body so nested loops/IFs inside lock work correctly
+            _run_body(body, variables)
         finally:
-            # Always unlock after block exits
+            # FIX: unlock all vars AFTER loop completes, not inside it
             for name in names:
                 lock_module.unlock(name)
-                return
+        return
 
-        if stripped.startswith('lockGroup '):
-            # lockGroup myGroup x, y, z
-            rest = stripped[10:].strip()
-            parts = rest.split(None, 1)
-            if len(parts) < 2:
-                error.print_error_msg("Invalid lockGroup syntax")
-                return
-            group_name = parts[0]
-            names = [n.strip() for n in parts[1].split(',') if n.strip()]
-            lock_module.lock_group(group_name, names)
-            return
+    if stripped.startswith('lockGroup '):
+        rest = stripped[10:].strip()
+        parts = rest.split(None, 1)
+        if len(parts) < 2: error.print_error_msg("Invalid lockGroup syntax"); return
+        names = [n.strip() for n in parts[1].split(',') if n.strip()]
+        lock_module.lock_group(parts[0], names)
+        return
 
-        if stripped.startswith('unlockGroup '):
-            group_name = stripped[12:].strip()
-            lock_module.unlock_group(group_name)
-            return
+    if stripped.startswith('unlockGroup '):
+        lock_module.unlock_group(stripped[12:].strip())
+        return
 
-        if stripped == 'lockList':
-            locked = lock_module.list_locked()
-            if not locked:
-                print("No locked variables")
-            else:
-                for name in locked:
-                    print(f"  locked: {name}")
-            return
+    if stripped == 'lockList':
+        locked = lock_module.list_locked()
+        if not locked: print("No locked variables")
+        else:
+            for name in locked: print(f"  locked: {name}")
+        return
 
-        if stripped == 'unlockAll':
-            lock_module.clear_all()
-            return
-        
+    if stripped == 'unlockAll':
+        lock_module.clear_all()
+        return
 
-    if stripped.startswith('timed') and stripped.endswith('do') and not stripped.startswith('timedReport'):
-        # Extract optional label
-        # Syntax: timed do  OR  timed "label" do
+    # FIX: timed block handler restored using time.py via timed_module
+    if (stripped == 'timed do' or (stripped.startswith('timed ') and stripped.endswith(' do'))) \
+            and not stripped.startswith('timedReport'):
         rest = stripped[5:].strip()
-        if rest == 'do':
-            label = None
-        elif rest.endswith(' do'):
+        label = None
+        if rest != 'do':
             label = rest[:-3].strip()
             if (label.startswith('"') and label.endswith('"')) or \
-            (label.startswith("'") and label.endswith("'")):
+               (label.startswith("'") and label.endswith("'")):
                 label = label[1:-1]
-        else:
-            error.print_error_msg("Invalid timed syntax, expected: timed do OR timed \"label\" do")
-            return
-
-        # Read body until endTimed
         body = []
         while True:
             line = _read_line()
-            if not line:
-                continue
-            if line.strip() == 'endTimed':
-                break
+            if not line: continue
+            if line.strip() == 'endTimed': break
             body.append(line)
-
-        # Execute body and measure time
         start = timed_module.start_timer()
         try:
-            for bl in body:
-                res = execute_line(bl, variables)
-                if isinstance(res, tuple) and res[0] == 'RETURN':
-                    return res
-                if res in ('BREAK', 'CONTINUE'):
-                    return res
+            # FIX: use _run_body so nested loops/IFs inside timed work correctly
+            _run_body(body, variables)
         finally:
             elapsed = timed_module.stop_timer(start)
             if label:
@@ -814,12 +679,9 @@ def execute_line(line, variables=None):
 
     if stripped == 'timedReport':
         results = timed_module.list_results()
-        if not results:
-            print("No timed results")
-            return
+        if not results: print("No timed results"); return
         print("=== Timed Report ===")
-        for label, elapsed in results.items():
-            print(f"  {label} — {elapsed}")
+        for label, elapsed in results.items(): print(f"  {label} — {elapsed}")
         return
 
     if stripped == 'timedClear':
@@ -829,30 +691,54 @@ def execute_line(line, variables=None):
     if stripped.startswith('ghost '):
         rest = stripped[6:].strip()
         m = global_vars.ASSIGNMENT_RE.match(rest)
-        if not m:
-            error.print_error_msg("Invalid ghost syntax")
-            return
+        if not m: error.print_error_msg("Invalid ghost syntax"); return
         name = m.group('name')
-        expr = m.group('expr').strip()
         try:
-            value = eval_expression(expr, variables)
+            value = eval_expression(m.group('expr').strip(), variables)
             ghost_module.register_ghost(name, value)
-            # Store in variables so expressions can find it
             variables[name] = value
-        except ValueError as exc:
-            error.print_error(exc)
+        except ValueError as exc: error.print_error(exc)
         return
 
     if stripped == 'ghostList':
         ghosts = ghost_module.list_ghosts()
-        if not ghosts:
-            print("No ghost variables")
+        if not ghosts: print("No ghost variables")
         else:
-            for name, status in ghosts.items():
-                print(f"  {name} -> {status}")
+            for name, status in ghosts.items(): print(f"  {name} -> {status}")
         return
-    
-    
+
+    if stripped.startswith('snapshot '):
+        snap_name = stripped[9:].strip()
+        global_vars.snapshots[snap_name] = {
+            k: copy.deepcopy(v)
+            for k, v in variables.items()
+            if not callable(v) and not k.startswith('__')
+        }
+        return
+
+    if stripped.startswith('rollback '):
+        snap_name = stripped[9:].strip()
+        if snap_name not in global_vars.snapshots:
+            error.print_error_msg(f"Snapshot '{snap_name}' not found"); return
+        snap = global_vars.snapshots[snap_name]
+        for k, v in snap.items(): variables[k] = v
+        for k in [k for k in list(variables.keys())
+                  if k not in snap and not callable(variables[k]) and not k.startswith('__')]:
+            del variables[k]
+        return
+
+    if stripped == 'snapshots':
+        if not global_vars.snapshots: print("No snapshots")
+        else:
+            for name in global_vars.snapshots: print(name)
+        return
+
+    if stripped.startswith('dropsnap '):
+        snap_name = stripped[9:].strip()
+        if snap_name in global_vars.snapshots: del global_vars.snapshots[snap_name]
+        else: error.print_error_msg(f"Snapshot '{snap_name}' not found")
+        return
+
     assignment = global_vars.ASSIGNMENT_RE.match(stripped)
     if assignment:
         name = assignment.group("name")
@@ -867,77 +753,23 @@ def execute_line(line, variables=None):
             parts = split_top_level(args_text, ',') if args_text.strip() else []
             evaluated = []
             try:
-                for p in parts:
-                    evaluated.append(eval_expression(p, variables))
-            except ValueError as exc:
-                error.print_error(exc); return
+                for p in parts: evaluated.append(eval_expression(p, variables))
+            except ValueError as exc: error.print_error(exc); return
             try:
                 result = variables[fname](*evaluated)
-                if result is not None and _source.at_top_level():
-                    print(result)
-            except Exception as exc:
-                error.print_function_call_error(exc)
+                if result is not None and _source.at_top_level(): print(result)
+            except Exception as exc: error.print_function_call_error(exc)
             return
 
     if stripped.startswith("typeof(") and stripped.endswith(")"):
         try:
             val = eval_expression(stripped[7:-1].strip(), variables)
-            mapping = {'list': 'list', 'dict': 'dict', 'tuple': 'tuple',
-                       'bool': 'bool', 'int': 'int', 'float': 'float', 'str': 'str'}
+            mapping = {'list':'list','dict':'dict','tuple':'tuple',
+                       'bool':'bool','int':'int','float':'float','str':'str'}
             t = mapping.get(type(val).__name__, 'unknown')
-            if _source.at_top_level():
-                print(t)
-            else:
-                variables['__typeof__'] = t
-        except ValueError as exc:
-            error.print_error(exc)
-        return
-    
-    if stripped.startswith('snapshot '):
-        snap_name = stripped[9:].strip()
-        # Deep copy current variables excluding callables and private keys
-        import copy
-        global_vars.snapshots[snap_name] = {
-            k: copy.deepcopy(v)
-            for k, v in variables.items()
-            if not callable(v) and not k.startswith('__')
-        }
-        return
-
-    if stripped.startswith('rollback '):
-        snap_name = stripped[9:].strip()
-        if snap_name not in global_vars.snapshots:
-            error.print_error_msg(f"Snapshot '{snap_name}' not found")
-            return
-        # Restore all snapshotted values
-        snap = global_vars.snapshots[snap_name]
-        for k, v in snap.items():
-            variables[k] = v
-        # Remove any variables that didn't exist at snapshot time
-        to_delete = [
-            k for k in list(variables.keys())
-            if k not in snap
-            and not callable(variables[k])
-            and not k.startswith('__')
-        ]
-        for k in to_delete:
-            del variables[k]
-        return
-
-    if stripped == 'snapshots':
-        if not global_vars.snapshots:
-            print("No snapshots")
-        else:
-            for name in global_vars.snapshots:
-                print(name)
-        return
-
-    if stripped.startswith('dropsnap '):
-        snap_name = stripped[9:].strip()
-        if snap_name in global_vars.snapshots:
-            del global_vars.snapshots[snap_name]
-        else:
-            error.print_error_msg(f"Snapshot '{snap_name}' not found")
+            if _source.at_top_level(): print(t)
+            else: variables['__typeof__'] = t
+        except ValueError as exc: error.print_error(exc)
         return
 
     if stripped.startswith("print"):
@@ -945,20 +777,15 @@ def execute_line(line, variables=None):
         if content.startswith("(") and content.endswith(")"):
             content = content[1:-1].strip()
         if content.startswith('f"') or content.startswith("f'"):
-            inner = content[2:-1]
-            print(interpolate(inner, variables, eval_expression))
+            print(interpolate(content[2:-1], variables, eval_expression))
             return
-        try:
-            print(eval_print_expression(content, variables))
-        except ValueError as exc:
-            error.print_error(exc)
+        try: print(eval_print_expression(content, variables))
+        except ValueError as exc: error.print_error(exc)
         return
 
     if stripped.startswith("IN"):
-        try:
-            parse_in_call(stripped)
-        except ValueError as exc:
-            error.print_error(exc)
+        try: parse_in_call(stripped)
+        except ValueError as exc: error.print_error(exc)
         return
 
     print(line)
@@ -972,8 +799,7 @@ def start():
     while True:
         try:
             line = _read_line()
-            if not line:
-                break
+            if not line: break
             execute_line(line, global_vars.variables)
         except EOFError:
             break

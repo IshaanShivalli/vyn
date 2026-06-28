@@ -169,6 +169,19 @@ def execute_forin_loop(header, body_lines, variables, eval_expression, execute_l
                 return res
             
 
+def read_block(readline=None):
+    if readline is None:
+        readline = lambda: input(">>> ")
+    body = []
+    while True:
+        line = readline()
+        if not line:
+            continue
+        if line.strip() in {"endLoop", "end"}:
+            break
+        body.append(line)
+    return body
+
 
 def parse_repeatuntil_header(line):
     match = REPEATUNTIL_RE.match(line.strip())
