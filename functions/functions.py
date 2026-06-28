@@ -16,6 +16,7 @@ from switch import read_switch, execute_switch, SWITCH_RE
 import lazy as lazy_module
 import lock as lock_module
 import ghost as ghost_module
+from pipeExpr import has_pipe, resolve_pipe
 dependency.register_io_functions(global_vars.variables)
 
 # FIX: LAMBDA_RE at module level, not recompiled on every eval_expression call
@@ -286,6 +287,10 @@ def eval_expression(expr, vars=None):
             vars = global_vars.variables
         return make_fn(params, [body_line], vars)
 
+    # Pipeline operator
+    if has_pipe(expr):
+        return resolve_pipe(expr, eval_expression, vars)
+
     def transform_ternary(s):
         s = s.strip()
         i, quote, depth = 0, None, 0
@@ -491,6 +496,8 @@ def execute_line(line, variables=None):
         body = read_block(readline=_read_line)
         execute_forin_loop(line, body, variables, eval_expression, execute_line)
         return
+
+
 
     if is_try_header(stripped):
         try_body, catch_var, catch_body = read_try_catch(_read_line)
