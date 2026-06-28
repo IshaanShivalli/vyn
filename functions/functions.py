@@ -4,7 +4,9 @@ import error
 import dependency
 import library
 from .params import parse_function_header, parse_function_call
-from loops import (parse_for_header, parse_while_header, condition_truth, execute_for_loop, execute_while_loop, execute_forin_loop, read_block)
+from loops import (parse_for_header, parse_while_header, condition_truth,
+                   execute_for_loop, execute_while_loop, execute_forin_loop,
+                   execute_repeatuntil_loop, read_block)
 from conditionals import read_conditional_block, execute_conditional
 from variables import global_vars, local
 from input import parse_in_call
@@ -12,7 +14,8 @@ from var import assign_variable, handle_augmented, handle_const
 from trycatch import is_try_header, read_try_catch, execute_try_catch
 from switch import read_switch, execute_switch, SWITCH_RE
 import lazy as lazy_module
-
+import lock as lock_module
+import ghost as ghost_module
 dependency.register_io_functions(global_vars.variables)
 
 # FIX: LAMBDA_RE at module level, not recompiled on every eval_expression call
@@ -219,9 +222,20 @@ class ExpressionEvaluator(ast.NodeVisitor):
 
     def visit_Name(self, node):
         if node.id == 'NIL': return 'NIL'
-        # Check if it's a lazy variable that hasn't been evaluated yet
+
+        # Ghost variable check
+        if ghost_module.is_ghost(node.id):
+            if ghost_module.is_expired(node.id):
+                raise ValueError(f"Ghost variable '{node.id}' has expired")
+            value = ghost_module.resolve_ghost(node.id)
+            # Remove from variables after access
+            self.variables.pop(node.id, None)
+            return value
+
+        # Lazy variable check
         if lazy_module.is_lazy(node.id) and node.id not in lazy_module._lazy_evaluated:
             return lazy_module.resolve_lazy(node.id, self.variables, eval_expression)
+
         if node.id in self.variables: return self.variables[node.id]
         raise ValueError(f"Undefined variable '{node.id}'")
 
@@ -389,6 +403,9 @@ def execute_line(line, variables=None):
     # ++/--
     if stripped.endswith('++'):
         name = stripped[:-2].strip()
+        if lock_module.is_locked(name):
+            error.print_error_msg(f"Cannot modify '{name}' — variable is locked")
+            return
         if name in variables:
             variables[name] = variables[name] + 1
         else:
@@ -397,6 +414,9 @@ def execute_line(line, variables=None):
 
     if stripped.endswith('--'):
         name = stripped[:-2].strip()
+        if lock_module.is_locked(name):
+            error.print_error_msg(f"Cannot modify '{name}' — variable is locked")
+            return
         if name in variables:
             variables[name] = variables[name] - 1
         else:
@@ -460,6 +480,11 @@ def execute_line(line, variables=None):
         # FIX: same
         body = read_block(readline=_read_line)
         execute_while_loop(line, body, variables, eval_expression, execute_line)
+        return
+    
+    if stripped.startswith("repeatUntil"):
+        body = read_block(readline=_read_line)
+        execute_repeatuntil_loop(line, body, variables, eval_expression, execute_line)
         return
 
     if stripped.startswith("forIn"):
@@ -671,6 +696,97 @@ def execute_line(line, variables=None):
     if handle_const(stripped, variables, eval_expression, parse_in_call):
         return
 
+    if stripped.startswith('lock ') and stripped.endswith(' do'):
+        # Extract variable names between 'lock' and 'do'
+        # Supports: lock x do  OR  lock x, y, z do
+        rest = stripped[5:-3].strip()
+        names = [n.strip() for n in rest.split(',') if n.strip()]
+
+        # Lock all variables
+        for name in names:
+            lock_module.lock(name)
+
+        # Read body until endLock
+        body = []
+        while True:
+            line = _read_line()
+            if not line:
+                continue
+            if line.strip() == 'endLock':
+                break
+            body.append(line)
+
+        # Execute body with locks active
+        try:
+            for bl in body:
+                res = execute_line(bl, variables)
+                if isinstance(res, tuple) and res[0] == 'RETURN':
+                    return res
+                if res in ('BREAK', 'CONTINUE'):
+                    return res
+        finally:
+            # Always unlock after block exits
+            for name in names:
+                lock_module.unlock(name)
+                return
+
+        if stripped.startswith('lockGroup '):
+            # lockGroup myGroup x, y, z
+            rest = stripped[10:].strip()
+            parts = rest.split(None, 1)
+            if len(parts) < 2:
+                error.print_error_msg("Invalid lockGroup syntax")
+                return
+            group_name = parts[0]
+            names = [n.strip() for n in parts[1].split(',') if n.strip()]
+            lock_module.lock_group(group_name, names)
+            return
+
+        if stripped.startswith('unlockGroup '):
+            group_name = stripped[12:].strip()
+            lock_module.unlock_group(group_name)
+            return
+
+        if stripped == 'lockList':
+            locked = lock_module.list_locked()
+            if not locked:
+                print("No locked variables")
+            else:
+                for name in locked:
+                    print(f"  locked: {name}")
+            return
+
+        if stripped == 'unlockAll':
+            lock_module.clear_all()
+            return
+
+    if stripped.startswith('ghost '):
+        rest = stripped[6:].strip()
+        m = global_vars.ASSIGNMENT_RE.match(rest)
+        if not m:
+            error.print_error_msg("Invalid ghost syntax")
+            return
+        name = m.group('name')
+        expr = m.group('expr').strip()
+        try:
+            value = eval_expression(expr, variables)
+            ghost_module.register_ghost(name, value)
+            # Store in variables so expressions can find it
+            variables[name] = value
+        except ValueError as exc:
+            error.print_error(exc)
+        return
+
+    if stripped == 'ghostList':
+        ghosts = ghost_module.list_ghosts()
+        if not ghosts:
+            print("No ghost variables")
+        else:
+            for name, status in ghosts.items():
+                print(f"  {name} -> {status}")
+        return
+    
+    
     assignment = global_vars.ASSIGNMENT_RE.match(stripped)
     if assignment:
         name = assignment.group("name")

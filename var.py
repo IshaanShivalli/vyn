@@ -1,11 +1,16 @@
 import error
 from variables import global_vars
 import re
+import lock as lock_module
 
 CONST_RE = re.compile(r'^const\s+(?P<name>[A-Za-z_]\w*)\s*=\s*(?P<expr>.+)$')
 
 
 def assign_variable(name, expr, variables, eval_expression, parse_in_call, execute_line=None):
+    # FIX: check lock before doing anything
+    if lock_module.is_locked(name):
+        error.print_error_msg(f"Cannot modify '{name}' — variable is locked")
+        return
     if name in global_vars.constants:
         error.print_error_msg(f"Cannot reassign constant '{name}'")
         return

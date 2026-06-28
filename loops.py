@@ -5,7 +5,7 @@ FOR_RE = re.compile(r'^forLoop\s*\{\s*(?P<init>[^;]+?)\s*;\s*(?P<cond>[^;]+?)\s*
 FORIN_RE = re.compile(r'^forIn\s*\{\s*(?P<var>[A-Za-z_]\w*)\s+in\s+(?P<iter>.+?)\s*\}\s*do\s*$')
 WHILE_RE = re.compile(r'^whileLoop\s*\{\s*(?P<cond>.+?)\s*\}\s*do\s*$')
 IDENTIFIER_RE = re.compile(r'^[A-Za-z_]\w*$')
-
+REPEATUNTIL_RE = re.compile(r'^repeatUntil\s*\{\s*(?P<cond>.+?)\s*\}\s*do\s*$')
 
 
 def parse_for_header(line):
@@ -167,6 +167,37 @@ def execute_forin_loop(header, body_lines, variables, eval_expression, execute_l
                 break
             if isinstance(res, tuple) and res[0] == 'RETURN':
                 return res
+            
+
+
+def parse_repeatuntil_header(line):
+    match = REPEATUNTIL_RE.match(line.strip())
+    if not match:
+        raise ValueError("Invalid repeatUntil syntax")
+    return match.group("cond").strip()
+
+
+def execute_repeatuntil_loop(header, body_lines, variables, eval_expression, execute_line):
+    try:
+        cond = parse_repeatuntil_header(header)
+    except ValueError as exc:
+        error.print_error(exc)
+        return
+
+    while True:
+        # Execute body first — always runs at least once
+        for body_line in body_lines:
+            res = execute_line(body_line, variables)
+            if res == 'BREAK':
+                return
+            if res == 'CONTINUE':
+                break
+            if isinstance(res, tuple) and res[0] == 'RETURN':
+                return res
+
+        # Check condition AFTER body runs
+        if condition_truth(cond, variables, eval_expression):
+            break
 
 
 # LOOP SYNTAX:
