@@ -17,6 +17,7 @@ import lazy as lazy_module
 import lock as lock_module
 import ghost as ghost_module
 from pipeExpr import has_pipe, resolve_pipe
+import timed as timed_module
 dependency.register_io_functions(global_vars.variables)
 
 # FIX: LAMBDA_RE at module level, not recompiled on every eval_expression call
@@ -766,6 +767,64 @@ def execute_line(line, variables=None):
         if stripped == 'unlockAll':
             lock_module.clear_all()
             return
+        
+
+    if stripped.startswith('timed') and stripped.endswith('do') and not stripped.startswith('timedReport'):
+        # Extract optional label
+        # Syntax: timed do  OR  timed "label" do
+        rest = stripped[5:].strip()
+        if rest == 'do':
+            label = None
+        elif rest.endswith(' do'):
+            label = rest[:-3].strip()
+            if (label.startswith('"') and label.endswith('"')) or \
+            (label.startswith("'") and label.endswith("'")):
+                label = label[1:-1]
+        else:
+            error.print_error_msg("Invalid timed syntax, expected: timed do OR timed \"label\" do")
+            return
+
+        # Read body until endTimed
+        body = []
+        while True:
+            line = _read_line()
+            if not line:
+                continue
+            if line.strip() == 'endTimed':
+                break
+            body.append(line)
+
+        # Execute body and measure time
+        start = timed_module.start_timer()
+        try:
+            for bl in body:
+                res = execute_line(bl, variables)
+                if isinstance(res, tuple) and res[0] == 'RETURN':
+                    return res
+                if res in ('BREAK', 'CONTINUE'):
+                    return res
+        finally:
+            elapsed = timed_module.stop_timer(start)
+            if label:
+                timed_module.store_result(label, elapsed)
+                print(f"[TIMED] {label} — {elapsed}")
+            else:
+                print(f"[TIMED] {elapsed}")
+        return
+
+    if stripped == 'timedReport':
+        results = timed_module.list_results()
+        if not results:
+            print("No timed results")
+            return
+        print("=== Timed Report ===")
+        for label, elapsed in results.items():
+            print(f"  {label} — {elapsed}")
+        return
+
+    if stripped == 'timedClear':
+        timed_module.clear_results()
+        return
 
     if stripped.startswith('ghost '):
         rest = stripped[6:].strip()
