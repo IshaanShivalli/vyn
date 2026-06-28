@@ -18,6 +18,8 @@ import lazy as lazy_module
 import lock as lock_module
 import ghost as ghost_module
 import oop as oop_module
+import memory as mem_module
+
 from pipeExpr import has_pipe, resolve_pipe
 
 # FIX: import time module from lib/ for timed block support
@@ -31,8 +33,18 @@ timed_module = _ilu.module_from_spec(_timed_spec)
 _timed_spec.loader.exec_module(timed_module)
 
 dependency.register_io_functions(global_vars.variables)
+global_vars.variables.update({
+    'memsize': mem_module.memsize,
+    'memzero': mem_module.memzero,
+    'memcopy': mem_module.memcopy,
+    'memdump': mem_module.memdump,
+    'sizeof': mem_module.sizeof,
+})
 
 LAMBDA_RE = re.compile(r'^lambda\s+(?P<params>[\w,\s]*)\s*:\s*(?P<expr>.+)$')
+MEM_ALLOC_RE = re.compile(r'^mem\s+(?P<name>[A-Za-z_]\w*)\s*<-\s*(?P<size>.+)$')
+MEM_WRITE_RE = re.compile(r'^(?P<name>[A-Za-z_]\w*)@(?P<idx>.+?)\s*=\s*(?P<val>.+)$')
+AT_RE = re.compile(r'([A-Za-z_]\w*)@(\w+)')
 
 # ---------------------------------------------------------------------------
 # Line source
@@ -280,6 +292,8 @@ class ExpressionEvaluator(ast.NodeVisitor):
     def visit_Num(self, node): return node.n
     def visit_Str(self, node): return node.s
 
+    
+
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == 'typeof':
             val = self.visit(node.args[0])
@@ -289,6 +303,12 @@ class ExpressionEvaluator(ast.NodeVisitor):
             return mapping.get(type(val).__name__, 'unknown')
         if isinstance(node.func, ast.Name) and node.func.id == 'not_in':
             return self.visit(node.args[0]) not in self.visit(node.args[1])
+        if isinstance(node.func, ast.Name) and node.func.id == 'sizeof':
+            val = self.visit(node.args[0])
+            return mem_module.sizeof(val)
+        if isinstance(node.func, ast.Name) and node.func.id == 'memsize':
+            mid = self.visit(node.args[0])
+            return mem_module.memsize(mid)
         func = self.visit(node.func)
         if func == 'NIL': return 'NIL'
         if not callable(func): error.not_a_function()
@@ -345,6 +365,22 @@ def eval_expression(expr, vars=None):
     expr = transform_ternary(expr)
     # FIX: re already imported at module level, no need to import inside function
     expr = re.sub(r'\bnot\s+in\b', 'not_in', expr)
+
+    # In eval_expression, after pipeline check:
+
+    def replace_at(expr, variables):
+        def replacer(m):
+            name = m.group(1)
+            idx = m.group(2)
+            return f'__mem_read__({name}, {idx})'
+        return AT_RE.sub(replacer, expr)
+
+    if '@' in expr:
+        expr = replace_at(expr, vars)
+        if vars is None:
+            vars = global_vars.variables
+        vars['__mem_read__'] = mem_module.read_byte
+
 
     try:
         tree = ast.parse(expr, mode='eval')
@@ -503,6 +539,105 @@ def execute_line(line, variables=None):
     if is_try_header(stripped):
         try_body, catch_var, catch_body = read_try_catch(_read_line)
         return execute_try_catch(try_body, catch_var, catch_body, variables, execute_line)
+
+    # mem x <- 16
+    
+    m = MEM_ALLOC_RE.match(stripped)
+    if m:
+        name = m.group('name')
+        try:
+            size = eval_expression(m.group('size').strip(), variables)
+            variables[name] = mem_module.alloc(size)
+        except Exception as exc:
+            error.print_error(exc)
+        return
+
+    # release x
+    if stripped.startswith('release '):
+        name = stripped[8:].strip()
+        if name not in variables:
+            error.print_error_msg(f"Undefined variable '{name}'")
+            return
+        try:
+            mem_module.free(variables[name])
+            del variables[name]
+        except Exception as exc:
+            error.print_error(exc)
+        return
+
+    # memdump(x)
+    if stripped.startswith('memdump(') and stripped.endswith(')'):
+        name = stripped[8:-1].strip()
+        if name not in variables:
+            error.print_error_msg(f"Undefined variable '{name}'")
+            return
+        try:
+            mem_module.memdump(variables[name])
+        except Exception as exc:
+            error.print_error(exc)
+        return
+
+    # memzero(x)
+    if stripped.startswith('memzero(') and stripped.endswith(')'):
+        name = stripped[8:-1].strip()
+        if name not in variables:
+            error.print_error_msg(f"Undefined variable '{name}'")
+            return
+        try:
+            mem_module.memzero(variables[name])
+        except Exception as exc:
+            error.print_error(exc)
+        return
+
+    # memcopy(src, dest, size)
+    if stripped.startswith('memcopy(') and stripped.endswith(')'):
+        args_text = stripped[8:-1].strip()
+        parts = split_top_level(args_text, ',') if args_text else []
+        if len(parts) != 3:
+            error.print_error_msg("memcopy expects: memcopy(src, dest, size)")
+            return
+        try:
+            src = eval_expression(parts[0], variables)
+            dest = eval_expression(parts[1], variables)
+            size = eval_expression(parts[2], variables)
+            mem_module.memcopy(src, dest, size)
+        except Exception as exc:
+            error.print_error(exc)
+        return
+
+    # memlist
+    if stripped == 'memlist':
+        print(mem_module.memlist())
+        return
+
+    # sizeof(x)
+    if stripped.startswith('sizeof(') and stripped.endswith(')'):
+        expr = stripped[7:-1].strip()
+        try:
+            val = eval_expression(expr, variables)
+            result = mem_module.sizeof(val)
+            if _source.at_top_level():
+                print(result)
+            else:
+                variables['__sizeof__'] = result
+        except Exception as exc:
+            error.print_error(exc)
+        return
+    
+
+    m = MEM_WRITE_RE.match(stripped)
+    if m:
+        name = m.group('name')
+        if name in variables:
+            try:
+                idx = eval_expression(m.group('idx').strip(), variables)
+                val = eval_expression(m.group('val').strip(), variables)
+                mem_module.write_byte(variables[name], idx, val)
+            except Exception as exc:
+                error.print_error(exc)
+        else:
+            error.print_error_msg(f"Undefined variable '{name}'")
+        return
 
     if SWITCH_RE.match(stripped):
         m = SWITCH_RE.match(stripped)
