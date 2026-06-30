@@ -25,6 +25,27 @@ from pipeExpr import has_pipe, resolve_pipe
 # FIX: import time module from lib/ for timed block support
 import importlib.util as _ilu
 import os as _os
+import sys
+
+structs_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "structs")
+
+# 1. Load struct_native first
+struct_native_spec = _ilu.spec_from_file_location(
+    "struct_native",
+    _os.path.join(structs_dir, "struct_native.py")
+)
+struct_native_mod = _ilu.module_from_spec(struct_native_spec)
+sys.modules["struct_native"] = struct_native_mod          # Register it
+struct_native_spec.loader.exec_module(struct_native_mod)
+
+# 2. Now load vyn_struct_syntax
+vyn_struct_spec = _ilu.spec_from_file_location(
+    "vyn_struct_syntax",
+    _os.path.join(structs_dir, "vyn_struct_syntax.py")
+)
+vyn_struct_syntax = _ilu.module_from_spec(vyn_struct_spec)
+vyn_struct_spec.loader.exec_module(vyn_struct_syntax)
+
 _timed_spec = _ilu.spec_from_file_location(
     "vyn_time",
     _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'time.py')
@@ -280,6 +301,8 @@ class ExpressionEvaluator(ast.NodeVisitor):
         obj = self.visit(node.value)
         if isinstance(obj, oop_module.VynObject):
             return obj.get_attr(node.attr)
+        if hasattr(obj, "get_attr"):           # ← Support for VynStructInstance
+            return obj.get_attr(node.attr)
         try:
             return getattr(obj, node.attr)
         except AttributeError:
@@ -457,6 +480,20 @@ def execute_line(line, variables=None):
         else: error.print_error_msg(f"Undefined variable '{name}'")
         return
 
+    if vyn_struct_syntax.handle_struct_header(stripped, _read_line):
+        return
+    if vyn_struct_syntax.handle_typedef(stripped):
+        return
+    if vyn_struct_syntax.try_new_instance(stripped, variables):
+        return
+    if stripped.startswith("struct"):
+        pass  
+    if "=" in stripped and "(" in stripped and ")" in stripped:
+        pass
+    if vyn_struct_syntax.try_attr_assign(stripped, variables, eval_expression):
+        return
+    
+    
     if stripped.endswith('--'):
         name = stripped[:-2].strip()
         if lock_module.is_locked(name):
@@ -535,6 +572,9 @@ def execute_line(line, variables=None):
     if stripped.startswith("forIn"):
         body = read_block(readline=_read_line)
         return execute_forin_loop(line, body, variables, eval_expression, execute_line)
+
+        # === Struct / Union / Typedef wiring ===
+    
 
     if is_try_header(stripped):
         try_body, catch_var, catch_body = read_try_catch(_read_line)
