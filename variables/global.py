@@ -16,7 +16,7 @@ INPUT_RE = re.compile(
     r'^IN\s*\(\s*(?P<datatype>\w+)\s+(?P<quote>["\'])(?P<prompt>.*?)(?P=quote)\s*\)\s*$'
 )
 ASSIGNMENT_RE = re.compile(r'^(?P<name>[A-Za-z_]\w*)\s*=\s*(?P<expr>.+)$')
-
+MULTI_ASSIGN_RE = re.compile(r'^\s*\(?\s*([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*\)?\s*=\s*(.+)$')
 variables = {}
 variables['not_in'] = lambda item, container: item not in container
 variables['in_list'] = lambda item, container: item in container

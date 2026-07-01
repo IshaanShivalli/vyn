@@ -19,7 +19,6 @@ import lock as lock_module
 import ghost as ghost_module
 import oop as oop_module
 import memory as mem_module
-
 from pipeExpr import has_pipe, resolve_pipe
 
 # FIX: import time module from lib/ for timed block support
@@ -83,6 +82,19 @@ LAMBDA_RE = re.compile(r'^lambda\s+(?P<params>[\w,\s]*)\s*:\s*(?P<expr>.+)$')
 MEM_ALLOC_RE = re.compile(r'^mem\s+(?P<name>[A-Za-z_]\w*)\s*<-\s*(?P<size>.+)$')
 MEM_WRITE_RE = re.compile(r'^(?P<name>[A-Za-z_]\w*)@(?P<idx>.+?)\s*=\s*(?P<val>.+)$')
 AT_RE = re.compile(r'([A-Za-z_]\w*)@(\w+)')
+_EXPR_CACHE = {}
+_MAX_EXPR_CACHE_SIZE = 256
+
+
+def _get_cached_ast(expr):
+    cached = _EXPR_CACHE.get(expr)
+    if cached is not None:
+        return cached
+    tree = ast.parse(expr, mode='eval')
+    if len(_EXPR_CACHE) >= _MAX_EXPR_CACHE_SIZE:
+        _EXPR_CACHE.clear()
+    _EXPR_CACHE[expr] = tree
+    return tree
 
 # ---------------------------------------------------------------------------
 # Line source
@@ -423,7 +435,7 @@ def eval_expression(expr, vars=None):
 
 
     try:
-        tree = ast.parse(expr, mode='eval')
+        tree = _get_cached_ast(expr)
     except SyntaxError:
         error.invalid_expression(expr)
 
@@ -461,7 +473,8 @@ def make_fn(params, body, outer_vars):
                     line = _read_line()
                 except StopIteration:
                     break
-                if not line: continue
+                if not line:
+                    continue
                 res = execute_line(line, current_vars)
                 if isinstance(res, tuple) and res[0] == 'RETURN':
                     return res[1]
@@ -506,10 +519,28 @@ def execute_line(line, variables=None):
         return
 
     if stripped.startswith('return'):
-        parts = stripped.split(None, 1)
-        if len(parts) == 1: return ('RETURN', None)
-        try: return ('RETURN', eval_expression(parts[1], variables))
-        except ValueError as exc: error.print_error(exc); return
+        rest = stripped[6:].strip()  # after 'return'
+        if not rest:
+            return ('RETURN', None)
+        # Split by commas at top level (respect parentheses, strings, etc.)
+        parts = split_top_level(rest, ',')
+        if len(parts) == 1:
+            try:
+                val = eval_expression(parts[0], variables)
+                return ('RETURN', val)
+            except ValueError as exc:
+                error.print_error(exc)
+                return
+        else:
+            # Multiple return values
+            values = []
+            for p in parts:
+                try:
+                    values.append(eval_expression(p, variables))
+                except ValueError as exc:
+                    error.print_error(exc)
+                    return
+            return ('RETURN', tuple(values))
 
     if stripped.startswith('throw '):
         try: val = eval_expression(stripped[6:].strip(), variables)
@@ -997,7 +1028,24 @@ def execute_line(line, variables=None):
     if vyn_union_syntax.try_attr_assign(stripped, variables, eval_expression):
         return
 
-
+    multi = global_vars.MULTI_ASSIGN_RE.match(stripped)
+    if multi:
+        names_str, expr = multi.group(1), multi.group(2).strip()
+        names = [n.strip() for n in names_str.split(',')]
+        # Evaluate RHS
+        try:
+            result = eval_expression(expr, variables)
+        except ValueError as exc:
+            error.print_error(exc)
+            return
+        # If result is not a tuple with enough elements, error
+        if not isinstance(result, tuple) or len(result) != len(names):
+            error.print_error_msg(f"Expected {len(names)} values, got {type(result).__name__}")
+            return
+        for name, val in zip(names, result):
+            # Respect locks and constants (call assign_variable or do manually)
+            assign_variable(name, str(val), variables, eval_expression, parse_in_call, execute_line)
+        return
 
     assignment = global_vars.ASSIGNMENT_RE.match(stripped)
     if assignment:
