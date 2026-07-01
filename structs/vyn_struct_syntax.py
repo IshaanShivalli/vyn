@@ -1,8 +1,15 @@
 # vyn_struct_syntax.py - Vyn syntax layer for struct/union/typedef
 # Wraps struct_native.py (the C-backed engine) behind Vyn syntax
 
+import os
+import sys
 import re
 import error
+
+STRUCTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if STRUCTS_DIR not in sys.path:
+    sys.path.insert(0, STRUCTS_DIR)
+
 import struct_native
 from struct_methods import StructMethod
 
@@ -26,7 +33,7 @@ class VynStructInstance:
         self._methods = methods or {}
 
     def get_attr(self, name):
-    # Check if we already have this method bound
+        # Check if we already have this method bound
         if name in self._methods:
             return self._methods[name].__get__(self)
 
@@ -34,15 +41,14 @@ class VynStructInstance:
         if hasattr(struct_native, "_struct_methods"):
             method_defs = struct_native._struct_methods.get(self.struct_name, {})
             if name in method_defs:
-                params, body = method_defs[name]
-                # Create StructMethod on the fly
+                params, body, eval_expression, run_body = method_defs[name]
                 method = StructMethod(
-                    name, 
-                    params, 
-                    body, 
-                    {},                    # outer_vars (can improve later)
-                    None,                  # eval_expression (we'll handle inside StructMethod)
-                    None                   # run_body
+                    name,
+                    params,
+                    body,
+                    {},
+                    eval_expression,
+                    run_body,
                 )
                 self._methods[name] = method
                 return method.__get__(self)
@@ -157,7 +163,7 @@ def parse_method_definition(first_line, readline):
 
     return name, params, body
 
-def handle_struct_header(header, readline):
+def handle_struct_header(header, readline, eval_expression=None, run_body=None):
     parsed = parse_struct_header(header)
     if not parsed:
         return False
@@ -184,6 +190,11 @@ def handle_struct_header(header, readline):
     if not hasattr(struct_native, "_struct_methods"):
         struct_native._struct_methods = {}
     struct_native._struct_methods[name] = methods
+
+    struct_native._struct_methods[name] = {
+        method_name: (params, body, eval_expression, run_body)
+        for method_name, (params, body) in methods.items()
+    }
 
     return True
 

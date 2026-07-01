@@ -479,20 +479,6 @@ def execute_line(line, variables=None):
         if name in variables: variables[name] += 1
         else: error.print_error_msg(f"Undefined variable '{name}'")
         return
-
-    if vyn_struct_syntax.handle_struct_header(stripped, _read_line):
-        return
-    if vyn_struct_syntax.handle_typedef(stripped):
-        return
-    if vyn_struct_syntax.try_new_instance(stripped, variables):
-        return
-    if stripped.startswith("struct"):
-        pass  
-    if "=" in stripped and "(" in stripped and ")" in stripped:
-        pass
-    if vyn_struct_syntax.try_attr_assign(stripped, variables, eval_expression):
-        return
-    
     
     if stripped.endswith('--'):
         name = stripped[:-2].strip()
@@ -512,6 +498,9 @@ def execute_line(line, variables=None):
         try: val = eval_expression(stripped[6:].strip(), variables)
         except Exception: val = stripped[6:].strip()
         raise RuntimeError(str(val))
+
+    if vyn_struct_syntax.try_attr_assign(stripped, variables, eval_expression):
+        return
 
     attribute_assignment = oop_module.parse_attribute_assignment(stripped)
     if attribute_assignment:
@@ -948,6 +937,31 @@ def execute_line(line, variables=None):
         if snap_name in global_vars.snapshots: del global_vars.snapshots[snap_name]
         else: error.print_error_msg(f"Snapshot '{snap_name}' not found")
         return
+
+
+        # Struct/union definition: struct Point {
+    if vyn_struct_syntax.parse_struct_header(stripped):
+        vyn_struct_syntax.handle_struct_header(
+            stripped,
+            _read_line,
+            eval_expression=eval_expression,
+            run_body=_run_body,
+        )
+        return
+
+    # typedef Point as Coord
+    if vyn_struct_syntax.handle_typedef(stripped):
+        return
+
+    # p = Point()  — must be before ASSIGNMENT_RE
+    if vyn_struct_syntax.try_new_instance(stripped, variables):
+        return
+
+    # p.x = 5  — must be before ASSIGNMENT_RE
+    if vyn_struct_syntax.try_attr_assign(stripped, variables, eval_expression):
+        return
+
+
 
     assignment = global_vars.ASSIGNMENT_RE.match(stripped)
     if assignment:
