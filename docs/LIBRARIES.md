@@ -2,11 +2,11 @@
 
 This document describes all standard libraries available in Vyn. To use any of these libraries, load them via the `import` command:
 ```vyn
+import math
 import lib/String
-import lib/math
 ```
 
-Once imported, all library functions are exposed directly in the global scope (flat API).
+Once imported, library functions and modules are available in the current scope. The standard `math` module is exposed as a module object, so `math.sqrt(16)` works directly in Vyn code.
 
 ---
 

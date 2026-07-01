@@ -1,8 +1,7 @@
 # structs/struct_methods.py
-from types import MethodType
+from collections import ChainMap
 
 class StructMethod:
-    """Wrapper for struct methods"""
     def __init__(self, name, params, body, outer_vars, eval_expression, run_body):
         self.name = name
         self.params = params
@@ -14,28 +13,20 @@ class StructMethod:
     def __get__(self, instance, owner=None):
         if instance is None:
             return self
-        return MethodType(self._bound_method, instance)
+        def _bound(*args):
+            return self._call(instance, *args)
+        return _bound
 
-    def _bound_method(self, instance, *args):
-        # Create local scope with 'this' pointing to the instance
+    def _call(self, instance, *args):
         local_vars = {'this': instance}
-        
-        # Bind parameters
         for i, param in enumerate(self.params):
-            if i < len(args):
-                local_vars[param] = args[i]
-            else:
-                local_vars[param] = None
+            local_vars[param] = args[i] if i < len(args) else None
 
-        # Execute method body
-        from collections import ChainMap
         scope = ChainMap(local_vars, self.outer_vars)
-
         result = None
         for line in self.body:
             res = self.run_body([line], scope)
             if isinstance(res, tuple) and res[0] == 'RETURN':
                 result = res[1]
                 break
-
         return result

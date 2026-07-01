@@ -27,31 +27,22 @@ _typedef_map = {}
 
 
 class VynStructInstance:
-    def __init__(self, struct_name, handle, methods=None):
+    def __init__(self, struct_name, handle):
         self.struct_name = struct_name
         self.handle = handle
-        self._methods = methods or {}
+        self._methods_cache = {}  # cache bound methods per instance
 
     def get_attr(self, name):
-        # Check if we already have this method bound
-        if name in self._methods:
-            return self._methods[name].__get__(self)
-
-        # Check if this struct has method definitions stored
+        if name in self._methods_cache:
+            return self._methods_cache[name]
         if hasattr(struct_native, "_struct_methods"):
             method_defs = struct_native._struct_methods.get(self.struct_name, {})
             if name in method_defs:
-                params, body, eval_expression, run_body = method_defs[name]
-                method = StructMethod(
-                    name,
-                    params,
-                    body,
-                    {},
-                    eval_expression,
-                    run_body,
-                )
-                self._methods[name] = method
-                return method.__get__(self)
+                params, body, eval_expression, run_body, outer_vars = method_defs[name]
+                method = StructMethod(name, params, body, outer_vars, eval_expression, run_body)
+                bound = method.__get__(self)
+                self._methods_cache[name] = bound
+                return bound
 
         # Otherwise it's a normal field
         try:
@@ -163,7 +154,10 @@ def parse_method_definition(first_line, readline):
 
     return name, params, body
 
-def handle_struct_header(header, readline, eval_expression=None, run_body=None):
+def handle_struct_header(header, readline, eval_expression=None, run_body=None, outer_vars=None):
+    """
+    Now accepts outer_vars to capture the current variable scope for methods.
+    """
     parsed = parse_struct_header(header)
     if not parsed:
         return False
@@ -173,7 +167,6 @@ def handle_struct_header(header, readline, eval_expression=None, run_body=None):
         error.print_error_msg(f"Struct '{name}' is already defined")
         return True
 
-    # FIX: unpack both fields and methods
     fields, methods = read_struct_body(readline)
 
     if not fields:
@@ -186,13 +179,12 @@ def handle_struct_header(header, readline, eval_expression=None, run_body=None):
         error.print_error(exc)
         return True
 
-    # Store methods so we can attach them later when creating instances
+    # Store methods with outer_vars, eval_expression and run_body
     if not hasattr(struct_native, "_struct_methods"):
         struct_native._struct_methods = {}
-    struct_native._struct_methods[name] = methods
 
     struct_native._struct_methods[name] = {
-        method_name: (params, body, eval_expression, run_body)
+        method_name: (params, body, eval_expression, run_body, outer_vars or {})
         for method_name, (params, body) in methods.items()
     }
 

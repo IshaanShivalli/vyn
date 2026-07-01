@@ -5,9 +5,10 @@ To use any library, import it:
 import List
 import crypto
 import Stack
+import math
 ```
 
-Standard libs (`lib/`) are loaded as Python modules. Packages (`packages/`) are `.vyn` files.
+Standard libs (`lib/`) are loaded as Python modules. Packages (`packages/`) are `.vyn` files. Imported modules such as `math` are exposed as module objects, so expressions like `math.sqrt(16)` work directly in Vyn code.
 
 ---
 

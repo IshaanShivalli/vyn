@@ -28,6 +28,7 @@ import os as _os
 import sys
 
 structs_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "structs")
+unions_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "unions")
 
 # 1. Load struct_native first
 struct_native_spec = _ilu.spec_from_file_location(
@@ -35,7 +36,7 @@ struct_native_spec = _ilu.spec_from_file_location(
     _os.path.join(structs_dir, "struct_native.py")
 )
 struct_native_mod = _ilu.module_from_spec(struct_native_spec)
-sys.modules["struct_native"] = struct_native_mod          # Register it
+sys.modules["struct_native"] = struct_native_mod
 struct_native_spec.loader.exec_module(struct_native_mod)
 
 # 2. Now load vyn_struct_syntax
@@ -45,6 +46,22 @@ vyn_struct_spec = _ilu.spec_from_file_location(
 )
 vyn_struct_syntax = _ilu.module_from_spec(vyn_struct_spec)
 vyn_struct_spec.loader.exec_module(vyn_struct_syntax)
+
+# 3. Load union runtime and syntax
+union_native_spec = _ilu.spec_from_file_location(
+    "union_native",
+    _os.path.join(unions_dir, "union_native.py")
+)
+union_native_mod = _ilu.module_from_spec(union_native_spec)
+sys.modules["union_native"] = union_native_mod
+union_native_spec.loader.exec_module(union_native_mod)
+
+vyn_union_spec = _ilu.spec_from_file_location(
+    "vyn_union_syntax",
+    _os.path.join(unions_dir, "union_syntax.py")
+)
+vyn_union_syntax = _ilu.module_from_spec(vyn_union_spec)
+vyn_union_spec.loader.exec_module(vyn_union_syntax)
 
 _timed_spec = _ilu.spec_from_file_location(
     "vyn_time",
@@ -502,6 +519,9 @@ def execute_line(line, variables=None):
     if vyn_struct_syntax.try_attr_assign(stripped, variables, eval_expression):
         return
 
+    if vyn_union_syntax.try_attr_assign(stripped, variables, eval_expression):
+        return
+
     attribute_assignment = oop_module.parse_attribute_assignment(stripped)
     if attribute_assignment:
         object_name, field_name, expr = attribute_assignment
@@ -939,26 +959,42 @@ def execute_line(line, variables=None):
         return
 
 
-        # Struct/union definition: struct Point {
+    if vyn_union_syntax.parse_union_header(stripped):
+        vyn_union_syntax.handle_union_header(
+            stripped,
+            _read_line,
+            eval_expression=eval_expression,
+            run_body=_run_body,
+            outer_vars=variables,
+        )
+        return
+
     if vyn_struct_syntax.parse_struct_header(stripped):
         vyn_struct_syntax.handle_struct_header(
             stripped,
             _read_line,
             eval_expression=eval_expression,
             run_body=_run_body,
+            outer_vars=variables,
         )
         return
 
-    # typedef Point as Coord
     if vyn_struct_syntax.handle_typedef(stripped):
         return
 
-    # p = Point()  — must be before ASSIGNMENT_RE
+    if vyn_union_syntax.handle_typedef(stripped):
+        return
+
     if vyn_struct_syntax.try_new_instance(stripped, variables):
         return
 
-    # p.x = 5  — must be before ASSIGNMENT_RE
+    if vyn_union_syntax.try_new_instance(stripped, variables):
+        return
+
     if vyn_struct_syntax.try_attr_assign(stripped, variables, eval_expression):
+        return
+
+    if vyn_union_syntax.try_attr_assign(stripped, variables, eval_expression):
         return
 
 

@@ -1,0 +1,25 @@
+import math
+
+struct Point {
+  x: int
+  y: int
+  method distFromOrigin() {
+    return math.sqrt(this.x * this.x + this.y * this.y)
+  }
+}
+
+p = Point()
+p.x = 3
+p.y = 4
+print(p.distFromOrigin())
+
+union Number {
+  i: int
+  f: float
+}
+
+u = Number()
+u.i = 7
+u.f = 2.5
+print(u.i)
+print(u.f)

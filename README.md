@@ -203,6 +203,45 @@ print(p.birthday())
 
 ---
 
+### Structured Data (`struct` / `union`)
+Vyn supports lightweight structs and unions for grouping related data.
+
+#### Structs
+```vyn
+import math
+
+struct Point {
+  x: int
+  y: int
+  method distFromOrigin() {
+    return math.sqrt(this.x * this.x + this.y * this.y)
+  }
+}
+
+p = Point()
+p.x = 3
+p.y = 4
+print(p.distFromOrigin())
+```
+
+#### Unions
+```vyn
+union Number {
+  i: int
+  f: float
+}
+
+u = Number()
+u.i = 7
+u.f = 2.5
+print(u.i)
+print(u.f)
+```
+
+Imported modules such as `math` are exposed as module objects, so `math.sqrt(9)` works directly in Vyn code.
+
+---
+
 ### Built-in Standard Libraries
 
 #### File I/O Functions

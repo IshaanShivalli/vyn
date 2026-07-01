@@ -60,9 +60,16 @@ def get_stdlib_functions():
 
 
 def register_library(lib_name, variables):
-    """Register a standard library (flat functions only)"""
-    libs = get_stdlib_functions()
-    if lib_name in libs:
-        variables.update(libs[lib_name])
-        return True
-    return False
+    """Register a standard library module and expose its public symbols."""
+    try:
+        module = _load_lib_module(lib_name)
+    except ImportError:
+        return False
+
+    variables[lib_name] = module
+    public = {
+        k: v for k, v in module.__dict__.items()
+        if not k.startswith("_") and not k.startswith("__")
+    }
+    variables.update(public)
+    return True
