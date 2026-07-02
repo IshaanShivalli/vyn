@@ -22,22 +22,25 @@ def assign_variable(name, expr, variables, eval_expression, parse_in_call, execu
             error.print_error(exc)
     elif expr.lower().startswith('function'):
         from functions.params import parse_function_header
-        from functions.functions import make_fn
+        from functions.functions import make_fn, _source
 
         parsed = parse_function_header(expr)
         if not parsed:
             error.print_error_msg("Invalid function header")
             return
-        _, params = parsed
+        _, params, returns = parsed
         body = []
         while True:
-            l = input('>>> ')
+            if _source.at_top_level():
+                l = input('>>> ')
+            else:
+                l = _source.readline('>>> ')
             if not l:
                 continue
             if l.strip() == 'endFunc':
                 break
             body.append(l)
-        variables[name] = make_fn(params, body, variables)
+        variables[name] = make_fn(params, body, variables, returns=returns)
     else:
         try:
             variables[name] = eval_expression(expr, variables)

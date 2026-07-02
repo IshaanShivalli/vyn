@@ -1,7 +1,12 @@
 import re
 
+try:
+    from golan.syntax import parse_function_header as _golan_parse_function_header
+except ImportError:
+    _golan_parse_function_header = None
+
 FUNCTION_HEADER_RE = re.compile(
-    r'^function\s*(?P<fname>[A-Za-z_]\w*)?\s*\(\s*(?P<params>.*?)\s*\)\s*perform\s*$',
+    r'^function\s*(?P<fname>[A-Za-z_]\w*)?\s*\(\s*(?P<params>.*?)\s*\)\s*(?:returns\s*\(\s*(?P<returns>.*?)\s*\)\s*)?perform\s*$',
     re.IGNORECASE,
 )
 CALL_RE = re.compile(r'^(?P<name>[A-Za-z_]\w*)\s*\(\s*(?P<args>.*)\s*\)\s*$')
@@ -22,9 +27,15 @@ def parse_function_header(line):
         return None
     fname = m.group('fname')
     raw = m.group('params')
+    returns_raw = m.group('returns')
     # FIX: return list of (name, default) tuples so make_fn can handle defaults
     params = [_parse_param(p) for p in raw.split(',') if p.strip()]
-    return fname, params
+    returns = None
+    if returns_raw:
+        returns = [r.strip() for r in returns_raw.split(',') if r.strip()]
+        if not returns:
+            returns = None
+    return fname, params, returns
 
 
 def parse_function_call(line):

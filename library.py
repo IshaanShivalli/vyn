@@ -20,7 +20,11 @@ def _load_lib_module(name):
     path = _os.path.join(base, "lib", f"{name}.py")
 
     if not _os.path.exists(path):
-        raise ImportError(f"Stdlib not found: {path}")
+        package_path = _os.path.join(base, name, "__init__.py")
+        if _os.path.exists(package_path):
+            path = package_path
+        else:
+            raise ImportError(f"Stdlib not found: {path}")
 
     spec = importlib.util.spec_from_file_location(f"lib.{name}", path)
     mod = importlib.util.module_from_spec(spec)

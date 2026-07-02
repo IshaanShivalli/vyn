@@ -4,10 +4,18 @@ import copy
 import error
 import dependency
 import library
-from .params import parse_function_header, parse_function_call
+from .params import parse_function_call, parse_function_header
 from loops import (parse_for_header, parse_while_header, condition_truth,
                    execute_for_loop, execute_while_loop, execute_forin_loop,
                    execute_repeatuntil_loop, read_block)
+
+try:
+    from ..golan import syntax as go_syntax
+    from ..golan.syntax import parse_go_function_header
+except ImportError:
+    go_syntax = None
+    parse_go_function_header = None
+
 from conditionals import read_conditional_block, execute_conditional
 from variables import global_vars, local
 from input import parse_in_call
@@ -77,6 +85,8 @@ global_vars.variables.update({
     'memdump': mem_module.memdump,
     'sizeof': mem_module.sizeof,
 })
+if go_syntax is not None:
+    go_syntax.register_syntax(global_vars.variables)
 
 LAMBDA_RE = re.compile(r'^lambda\s+(?P<params>[\w,\s]*)\s*:\s*(?P<expr>.+)$')
 MEM_ALLOC_RE = re.compile(r'^mem\s+(?P<name>[A-Za-z_]\w*)\s*<-\s*(?P<size>.+)$')
@@ -230,6 +240,18 @@ def read_function_body():
         if not line:
             continue
         if line.strip() == 'endFunc':
+            break
+        body.append(line)
+    return body
+
+
+def read_go_function_body():
+    body = []
+    while True:
+        line = _read_line()
+        if not line:
+            continue
+        if line.strip() == '}':
             break
         body.append(line)
     return body
@@ -453,7 +475,7 @@ def eval_print_expression(expr, vars=None):
 # Function factory
 # ---------------------------------------------------------------------------
 
-def make_fn(params, body, outer_vars):
+def make_fn(params, body, outer_vars, returns=None):
     def _fn(*call_args):
         local_vars = {}
         for i, (name, default) in enumerate(params):
@@ -477,7 +499,19 @@ def make_fn(params, body, outer_vars):
                     continue
                 res = execute_line(line, current_vars)
                 if isinstance(res, tuple) and res[0] == 'RETURN':
-                    return res[1]
+                    value = res[1]
+                    if returns is not None:
+                        expected = len(returns)
+                        if isinstance(value, tuple):
+                            if len(value) != expected:
+                                error.print_error_msg(
+                                    f"Expected {expected} return values, got {len(value)}")
+                                return None
+                        elif expected != 1:
+                            error.print_error_msg(
+                                f"Expected {expected} return values, got 1")
+                            return None
+                    return value
                 if res in ('BREAK', 'CONTINUE'):
                     return res
         finally:
@@ -844,14 +878,30 @@ def execute_line(line, variables=None):
             class_name, params, body, variables, eval_expression, _run_body)
         return
 
+    if stripped.startswith('func '):
+        if parse_go_function_header is None:
+            error.print_error_msg("Go syntax support is unavailable")
+            return
+        parsed = parse_go_function_header(stripped)
+        if not parsed:
+            error.print_error_msg("Invalid Go function header")
+            return
+        fname, params, returns = parsed
+        body = read_go_function_body()
+        if not fname:
+            error.print_error_msg("unnamed standalone function must be assigned to a variable")
+            return
+        variables[fname] = make_fn(params, body, variables, returns=returns)
+        return
+
     if stripped.lower().startswith('function'):
         parsed = parse_function_header(stripped)
         if not parsed: error.print_error_msg("Invalid function header"); return
-        fname, params = parsed
+        fname, params, returns = parsed
         body = read_function_body()
         if not fname:
             error.print_error_msg("unnamed standalone function must be assigned to a variable"); return
-        variables[fname] = make_fn(params, body, variables)
+        variables[fname] = make_fn(params, body, variables, returns=returns)
         return
 
     if handle_const(stripped, variables, eval_expression, parse_in_call): return
