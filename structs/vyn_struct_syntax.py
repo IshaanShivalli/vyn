@@ -66,7 +66,10 @@ class VynStructInstance:
                         break
                 return result
             return trait_method
-        return 'NIL'
+        try:
+            return struct_native.get_field(self.handle, name)
+        except ValueError:
+            return 'NIL'
         
 
     def set_attr(self, name, value):

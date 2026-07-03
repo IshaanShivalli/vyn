@@ -7,6 +7,7 @@ use std::sync::Mutex;
 #[pyclass(extends=PyException)]
 #[derive(Debug, Clone)]
 pub struct PropagateError {
+    #[pyo3(get)]
     pub value: PyObject,
 }
 
@@ -67,12 +68,12 @@ impl Ok {
         f.call1(py, (self.value.clone(),))
     }
 
-    fn or_else(&self, _py: Python, _f: PyObject) -> PyObject {
-        self.value.clone()
+    fn or_else(&self, py: Python, _f: PyObject) -> PyObject {
+        self.clone().into_py(py)
     }
 
     fn is_some(&self) -> bool {
-        true
+        false
     }
 
     fn is_none(&self) -> bool {
@@ -103,6 +104,14 @@ impl Err {
 
     fn is_err(&self) -> bool {
         true
+    }
+
+    fn is_some(&self) -> bool {
+        false
+    }
+
+    fn is_none(&self) -> bool {
+        false
     }
 
     fn unwrap(&self) -> PyResult<PyObject> {
@@ -202,8 +211,8 @@ impl Some {
         f.call1(py, (self.value.clone(),))
     }
 
-    fn or_else(&self, _py: Python, _f: PyObject) -> PyObject {
-        self.value.clone()
+    fn or_else(&self, py: Python, _f: PyObject) -> PyObject {
+        self.clone().into_py(py)
     }
 
     fn filter(&self, py: Python, predicate: PyObject) -> PyResult<PyObject> {
@@ -302,14 +311,16 @@ fn propagate(py: Python, value: PyObject) -> PyResult<PyObject> {
         return Result::Ok(some.unwrap());
     }
 
-    if let Result::Ok(err) = value.extract::<Err>(py) {
-        let err_py = Py::new(py, err.clone())?;
-        return Err(PyErr::from_value(err_py.as_ref(py)));
+    if value.extract::<Err>(py).is_ok() {
+        let initializer = PropagateError::new(py, value.clone())?;
+        let err_obj = Py::new(py, initializer)?;
+        return Err(PyErr::from_value(err_obj.as_ref(py)));
     }
 
     if value.extract::<NoneType>(py).is_ok() {
-        let none_py = Py::new(py, NoneType)?;
-        return Err(PyErr::from_value(none_py.as_ref(py)));
+        let initializer = PropagateError::new(py, value.clone())?;
+        let err_obj = Py::new(py, initializer)?;
+        return Err(PyErr::from_value(err_obj.as_ref(py)));
     }
 
     Result::Ok(value)

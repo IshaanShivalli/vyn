@@ -9,6 +9,17 @@ import os as _os
 
 def _load_lib_module(name):
     """Try to load a module from lib/ folder"""
+    import sys
+    import importlib
+
+    # Try direct import first (for root-level packages like rust, errExpr)
+    try:
+        if name in sys.modules:
+            return sys.modules[name]
+        return importlib.import_module(name)
+    except (ImportError, ModuleNotFoundError):
+        pass
+
     # Try as package import first
     try:
         return importlib.import_module(f".lib.{name}", package="attachments")
@@ -23,10 +34,12 @@ def _load_lib_module(name):
         package_path = _os.path.join(base, name, "__init__.py")
         if _os.path.exists(package_path):
             path = package_path
+            spec = importlib.util.spec_from_file_location(name, path)
         else:
             raise ImportError(f"Stdlib not found: {path}")
+    else:
+        spec = importlib.util.spec_from_file_location(f"lib.{name}", path)
 
-    spec = importlib.util.spec_from_file_location(f"lib.{name}", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
