@@ -12,7 +12,7 @@ if STRUCTS_DIR not in sys.path:
 
 import struct_native
 from struct_methods import StructMethod
-
+from traits import get_trait_methods_for_type
 
 STRUCT_RE = re.compile(r'^struct\s+(?P<name>[A-Za-z_]\w*)\s*\{\s*$')
 UNION_RE = re.compile(r'^union\s+(?P<name>[A-Za-z_]\w*)\s*\{\s*$')
@@ -43,12 +43,31 @@ class VynStructInstance:
                 bound = method.__get__(self)
                 self._methods_cache[name] = bound
                 return bound
-
-        # Otherwise it's a normal field
-        try:
-            return struct_native.get_field(self.handle, name)
-        except ValueError:
-            return 'NIL'
+        
+        
+        trait_methods = get_trait_methods_for_type(self.struct_name)
+        if name in trait_methods:
+            params, body, outer_vars, eval_expr, run_body = trait_methods[name]
+            # Create a bound callable that passes 'this'
+            def trait_method(*args):
+                local_vars = {'this': self}
+                for i, p in enumerate(params):
+                    if i < len(args):
+                        local_vars[p] = args[i]
+                    else:
+                        local_vars[p] = None
+                from collections import ChainMap
+                scope = ChainMap(local_vars, outer_vars)
+                result = None
+                for line in body:
+                    res = run_body([line], scope)
+                    if isinstance(res, tuple) and res[0] == 'RETURN':
+                        result = res[1]
+                        break
+                return result
+            return trait_method
+        return 'NIL'
+        
 
     def set_attr(self, name, value):
         try:

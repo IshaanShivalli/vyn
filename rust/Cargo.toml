@@ -1,0 +1,12 @@
+[package]
+name = "vyn_rust"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_vyn_rust"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+lazy_static = "1.4"

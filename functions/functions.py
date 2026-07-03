@@ -28,8 +28,8 @@ import ghost as ghost_module
 import oop as oop_module
 import memory as mem_module
 from pipeExpr import has_pipe, resolve_pipe
-
-# FIX: import time module from lib/ for timed block support
+from errExpr import propagate
+from traits import parse_impl_header, read_impl_body, register_impl
 import importlib.util as _ilu
 import os as _os
 import sys
@@ -373,7 +373,8 @@ class ExpressionEvaluator(ast.NodeVisitor):
             val = self.visit(node.args[0])
             mapping = {'list':'list','dict':'dict','tuple':'tuple',
                        'bool':'bool','int':'int','float':'float','str':'str',
-                       'VynObject':'object','VynClass':'class'}
+                       'VynObject':'object','VynClass':'class','VynStructInstance': 'struct', 
+                       'Ok': 'Ok', 'Err': 'Err', 'Some': 'Some', 'NoneType': 'None',}
             return mapping.get(type(val).__name__, 'unknown')
         if isinstance(node.func, ast.Name) and node.func.id == 'not_in':
             return self.visit(node.args[0]) not in self.visit(node.args[1])
@@ -404,6 +405,12 @@ def eval_expression(expr, vars=None):
 
     if has_pipe(expr):
         return resolve_pipe(expr, eval_expression, vars)
+    if expr.endswith('^'):
+        inner = expr[:-1].strip()
+        expr = f'propagate({inner})'
+        if vars is None:
+            vars = global_vars.variables
+        vars['propagate'] = propagate
 
     def transform_ternary(s):
         s = s.strip()
@@ -647,8 +654,13 @@ def execute_line(line, variables=None):
         body = read_block(readline=_read_line)
         return execute_forin_loop(line, body, variables, eval_expression, execute_line)
 
-        # === Struct / Union / Typedef wiring ===
-    
+    parsed_impl = parse_impl_header(stripped)
+    if parsed_impl:
+        trait_name, type_name = parsed_impl
+        methods = read_impl_body(_read_line, variables, eval_expression, _run_body)
+        register_impl(trait_name, type_name, methods)
+        return
+
 
     if is_try_header(stripped):
         try_body, catch_var, catch_body = read_try_catch(_read_line)
