@@ -2,10 +2,10 @@ import os
 import sys
 import struct
 import json
-from catalog import Catalog, CatalogError, ColumnDef, TableDef, IndexDef
-_catalog = None
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+from catalog import Catalog, CatalogError, ColumnDef, TableDef, IndexDef
+from query import run_query, LexerError, ParseError, ExecutionError
+from query.executor import Executor
 from engine.storage import StorageManager, StorageError
 from engine.buffer_pool import BufferPool
 from engine.btree import BTree, RID
@@ -20,9 +20,11 @@ CONTINUATION = "   ... "
 
 _storage = None
 _pool = None
+_executor = None
 _current_db = None
 _tables = {}
 _indexes = {}
+_catalog = None
 _history = []
 
 
@@ -121,7 +123,7 @@ def _unpack_row(data, schema):
 
 
 def cmd_open(args):
-    global _storage, _pool, _current_db, _catalog
+    global _storage, _pool, _current_db, _catalog, _executor
     if not args:
         _err("Usage: OPEN <filename>")
         return
@@ -138,6 +140,7 @@ def cmd_open(args):
         _pool = BufferPool(_storage)
         _catalog = Catalog(_storage, _pool, first_page_id=1)
         _catalog.load()
+        _executor = Executor(_catalog, _pool, _storage)
         _current_db = path
         _ok(f"Opened database: {path}")
         _info(f"Pages: {_storage.page_count()}")
@@ -147,7 +150,7 @@ def cmd_open(args):
 
 
 def cmd_close(args):
-    global _storage, _pool, _current_db, _catalog
+    global _storage, _pool, _current_db, _catalog, _executor
     if _storage is None:
         _err("No database open")
         return
@@ -207,20 +210,59 @@ def cmd_create_table(args):
     _table(['Column', 'Type', 'Key', 'Constraint'], col_display)
 
 
-def cmd_drop_table(args):
+def cmd_drop_database(args):
+    global _storage, _pool, _current_db, _catalog, _executor
     if _storage is None:
         _err("No database open")
         return
-    if not args:
-        _err("Usage: DROP TABLE name")
+    path = _current_db
+    _pool.flush_all()
+    _storage.close()
+    _storage = None
+    _pool = None
+    _current_db = None
+    _catalog = None
+    _executor = None
+    os.remove(path)
+    _ok(f"Database '{path}' deleted")
+
+
+def _run_sql(sql):
+    if _executor is None:
+        _err("No database open. Use OPEN <file> first.")
         return
-    name = args[0]
-    if name not in _tables:
-        _err(f"Table '{name}' does not exist")
-        return
-    del _tables[name]
-    
-    _ok(f"Table '{name}' dropped")
+    try:
+        rows = run_query(sql, _catalog, _pool, _storage)
+        if not rows:
+            _info("(no rows returned)")
+            return
+        first = rows[0]
+        if 'status' in first:
+            _ok(first['status'])
+            return
+        if 'inserted' in first:
+            _ok(f"{first['inserted']} row(s) inserted")
+            return
+        if 'updated' in first:
+            _ok(f"{first['updated']} row(s) updated")
+            return
+        if 'deleted' in first:
+            _ok(f"{first['deleted']} row(s) deleted")
+            return
+        if 'plan' in first:
+            print(f"\n{first['plan']}\n")
+            return
+        headers = list(first.keys())
+        _table(headers, [[row.get(h, '') for h in headers] for row in rows])
+    except (LexerError, ParseError) as exc:
+        _err(f"Syntax error: {exc}")
+    except ExecutionError as exc:
+        _err(f"Execution error: {exc}")
+    except Exception as exc:
+        _err(f"Error: {exc}")
+        if os.environ.get('VYNDB_DEBUG'):
+            import traceback
+            traceback.print_exc()
 
 def cmd_drop_index(args):
     if _storage is None:
@@ -557,53 +599,41 @@ def cmd_describe(args):
         _err("Usage: DESCRIBE table")
         return
     name = args[0]
-    if name not in _tables:
+    if _catalog is None:
+        _err("No database open")
+        return
+    t = _catalog.get_table(name)
+    if t is None:
         _err(f"Table '{name}' does not exist")
         return
-    schema = _tables[name]
-    rows = [(c['name'], c['type'],
-             'YES' if c.get('primary_key') else '',
-             'NOT NULL' if not c.get('nullable', True) else 'NULL')
-            for c in schema['columns']]
+    rows = [(c.name, c.col_type,
+             'YES' if c.primary_key else '',
+             'NOT NULL' if not c.nullable else 'NULL')
+            for c in t.columns]
     print(f"\n  Table: {name}")
     _table(['Column', 'Type', 'Key', 'Null'], rows)
-    _info(f"Root page: {schema['root_page']}")
-    _info(f"Row count: {schema['row_count']}")
-    if schema.get('indexes'):
+    _info(f"Root page: {t.root_page}")
+    _info(f"Row count: {t.row_count}")
+    if t.indexes:
         print()
-        idx_rows = [(k, v['column'], v['root_page']) for k, v in schema['indexes'].items()]
+        idx_rows = [(k, v.column_name, v.root_page)
+                    for k, v in t.indexes.items()]
         _table(['Index', 'Column', 'Root Page'], idx_rows)
 
 
+
 def cmd_tables(args):
-    if _storage is None:
+    if _catalog is None:
         _err("No database open")
         return
-    if not _tables:
+    tables = _catalog.tables()
+    if not tables:
         _info("No tables")
         return
-    rows = [(name, len(s['columns']), s['row_count'], s['root_page'])
-            for name, s in _tables.items()]
+    rows = [(name, len(t.columns), t.row_count, t.root_page)
+            for name, t in tables.items()]
     _table(['Table', 'Columns', 'Rows', 'Root Page'], rows)
 
-
-def cmd_drop_database(args):
-    global _storage, _pool, _current_db, _tables
-    if _storage is None:
-        _err("No database open")
-        return
-    path = _current_db
-    meta = path + '.meta.json'
-    _pool.flush_all()
-    _storage.close()
-    _storage = None
-    _pool = None
-    _current_db = None
-    _tables = {}
-    os.remove(path)
-    if os.path.exists(meta):
-        os.remove(meta)
-    _ok(f"Database '{path}' deleted")
 
 
 
@@ -715,7 +745,7 @@ def cmd_dump(args):
 
 
 def cmd_count(args):
-    if _storage is None:
+    if _executor is None:
         _err("No database open")
         return
     import re
@@ -726,11 +756,10 @@ def cmd_count(args):
         return
     name  = m.group(1)
     where = m.group(2)
-    if name not in _tables:
-        _err(f"Table '{name}' does not exist")
-        return
-    rows = _scan_table(name, where_clause=where)
-    _info(f"Count: {len(rows)}")
+    sql = f"SELECT COUNT(*) FROM {name}"
+    if where:
+        sql += f" WHERE {where}"
+    _run_sql(sql)
 
 
 def cmd_help(args):
@@ -790,7 +819,7 @@ COMMANDS = {
     'OPEN':   cmd_open,
     'CLOSE':  cmd_close,
     'CREATE': None,
-    'DROP':   cmd_drop_table,
+    'DROP':   cmd_drop_database,
     'INSERT': cmd_insert,
     'SELECT': cmd_select,
     'UPDATE': cmd_update,
@@ -806,39 +835,65 @@ COMMANDS = {
 }
 
 
+SQL_STARTERS = {
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE',
+    'CREATE', 'DROP', 'ALTER', 'TRUNCATE',
+    'BEGIN', 'COMMIT', 'ROLLBACK', 'SAVEPOINT',
+    'EXPLAIN',
+}
+
 def _dispatch(line):
-    tokens = line.strip().split()
-    if not tokens:
+    stripped = line.strip()
+    if not stripped:
         return
+
+    tokens = stripped.split()
     cmd = tokens[0].upper()
     rest = tokens[1:]
 
-    if cmd == 'CREATE':
-        if rest and rest[0].upper() == 'TABLE':
-            cmd_create_table(rest[1:])
-        elif rest and rest[0].upper() == 'INDEX':
-            cmd_create_index(rest[1:])
-        else:
-            _err("Unknown CREATE command. Try CREATE TABLE or CREATE INDEX")
-    elif cmd == 'DROP':
-        if rest and rest[0].upper() == 'TABLE':
-            cmd_drop_table(rest[1:])
-        elif rest and rest[0].upper() == 'DATABASE':
-            cmd_drop_database(rest[1:])
-        elif rest and rest[0].upper() == 'INDEX':
-            cmd_drop_index(rest[1:])
-        else:
-            cmd_drop_database(rest)
-    elif cmd in COMMANDS and COMMANDS[cmd]:
-        COMMANDS[cmd](rest)
-    elif cmd == 'ALTER':
-        if rest and rest[0].upper() == 'TABLE':
-            cmd_alter_table(rest[1:])
-        else:
-            _err("Unknown ALTER command")
-    
-    else:
-        _err(f"Unknown command '{cmd}'. Type HELP for commands.")
+    # Shell-only commands — never go through query engine
+    if cmd == 'OPEN':
+        cmd_open(rest)
+        return
+    if cmd == 'CLOSE':
+        cmd_close(rest)
+        return
+    if cmd == 'TABLES':
+        cmd_tables(rest)
+        return
+    if cmd == 'PAGES':
+        cmd_pages(rest)
+        return
+    if cmd == 'DUMP':
+        cmd_dump(rest)
+        return
+    if cmd == 'DESCRIBE':
+        cmd_describe(rest)
+        return
+    if cmd == 'COUNT':
+        cmd_count(rest)
+        return
+    if cmd == 'HELP':
+        cmd_help(rest)
+        return
+    if cmd == 'HISTORY':
+        cmd_history(rest)
+        return
+    if cmd == 'CLEAR':
+        cmd_clear(rest)
+        return
+
+    # DROP with no subcommand = drop database
+    if cmd == 'DROP' and (not rest or rest[0].upper() not in ('TABLE', 'INDEX')):
+        cmd_drop_database(rest)
+        return
+
+    # Everything else goes through the query engine
+    if cmd in SQL_STARTERS:
+        _run_sql(stripped)
+        return
+
+    _err(f"Unknown command '{cmd}'. Type HELP for commands.")
 
 
 def _read_multiline():
