@@ -20,7 +20,6 @@ _goroutine_next_id = [0]
 
 
 def _push_defer_stack(fn_id, scope_id):
-    go_interpreter.call('vyn_defer_new_stack') if scope_id not in _defer_stacks else None
     if scope_id not in _defer_stacks:
         _defer_stacks[scope_id] = go_interpreter.call('vyn_defer_new_stack')
     stack_id = _defer_stacks[scope_id]

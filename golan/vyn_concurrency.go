@@ -4,6 +4,7 @@ import "C"
 import (
 	"sync"
 	"unsafe"
+	"strconv"
 )
 
 type vynChannel struct {
@@ -279,7 +280,7 @@ func fmt_int(v int64) string {
 }
 
 func fmt_float(v float64) string {
-	return strconv_fmt(v)
+    return strconv.FormatFloat(v, 'f', -1, 64)
 }
 
 func strconv_fmt(f float64) string {
@@ -322,5 +323,3 @@ func appendFloat(b []byte, f float64) []byte {
 	}
 	return append(b, []byte(fracStr[:i])...)
 }
-
-func main() {}
