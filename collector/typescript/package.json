@@ -1,0 +1,12 @@
+{
+    "name": "vyn-typescript",
+    "version": "1.0.0",
+    "description": "Vyn Collector TypeScript Backend",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/main.js"
+    },
+    "devDependencies": {
+        "typescript": "^5.9.2"
+    }
+}

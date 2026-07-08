@@ -1,0 +1,6 @@
+{
+    "collectorVersion": "1.0.0",
+    "dependencyFolder": "vyn-dependencies",
+    "logLevel": "info",
+    "registry": "https://github.com/IshaanShivalli/vyn-lib"
+}

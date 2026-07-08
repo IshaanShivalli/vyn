@@ -1,0 +1,19 @@
+{
+    "Search": {
+        "version": "1.0.0",
+        "author": "Ishaan",
+        "description": "Searches through data",
+        "files": [
+            "Search.vyn"
+        ]
+    },
+
+    "StringUtils": {
+        "version": "1.2.0",
+        "author": "Ishaan",
+        "description": "Extra string helpers",
+        "files": [
+            "StringUtils.vyn"
+        ]
+    }
+}
