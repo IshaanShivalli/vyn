@@ -29,6 +29,8 @@ def _load_lib_module(name):
     # Fallback: load directly from file
     base = _os.path.dirname(__file__) if "__file__" in globals() else "."
     path = _os.path.join(base, "lib", f"{name}.py")
+    if not _os.path.exists(path):
+        path = _os.path.join(base, "vyn-dependencies", "libraries", f"{name}.py")
 
     if not _os.path.exists(path):
         package_path = _os.path.join(base, name, "__init__.py")
@@ -51,6 +53,8 @@ def get_stdlib_functions():
     
     base = _os.path.dirname(__file__) if "__file__" in globals() else "."
     lib_dir = _os.path.join(base, "lib")
+    if not _os.path.exists(lib_dir):
+        lib_dir = _os.path.join(base, "vyn-dependencies", "libraries")
 
     if not _os.path.exists(lib_dir):
         return libs

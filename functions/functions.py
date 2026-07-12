@@ -70,12 +70,23 @@ vyn_union_spec = _ilu.spec_from_file_location(
 vyn_union_syntax = _ilu.module_from_spec(vyn_union_spec)
 vyn_union_spec.loader.exec_module(vyn_union_syntax)
 
+time_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'time.py')
+if not _os.path.exists(time_path):
+    time_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'vyn-dependencies', 'libraries', 'time.py')
+
 _timed_spec = _ilu.spec_from_file_location(
     "vyn_time",
-    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'time.py')
+    time_path
 )
 timed_module = _ilu.module_from_spec(_timed_spec)
 _timed_spec.loader.exec_module(timed_module)
+
+_db_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'db.py')
+if not _os.path.exists(_db_path):
+    _db_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'vyn-dependencies', 'libraries', 'db.py')
+_db_spec = _ilu.spec_from_file_location("vyn_db", _db_path)
+_db = _ilu.module_from_spec(_db_spec)
+_db_spec.loader.exec_module(_db)
 
 dependency.register_io_functions(global_vars.variables)
 global_vars.variables.update({
@@ -84,6 +95,12 @@ global_vars.variables.update({
     'memcopy': mem_module.memcopy,
     'memdump': mem_module.memdump,
     'sizeof': mem_module.sizeof,
+    'connectSqlite': _db.connectSqlite,
+    'connectMysql': _db.connectMysql,
+    'connectPostgres': _db.connectPostgres,
+    'dbQuery': _db.query,
+    'dbExecute': _db.execute,
+    'dbClose': _db.close,
 })
 if go_syntax is not None:
     go_syntax.register_syntax(global_vars.variables)
@@ -537,6 +554,101 @@ def execute_line(line, variables=None):
 
     stripped = line.strip()
     if not stripped: return
+
+    # --- NATIVE DATABASE SYNTAX HANDLERS ---
+    if stripped.startswith("DB_OPEN "):
+        parts = stripped.rsplit(" AS ", 1)
+        if len(parts) == 2:
+            var_name = parts[1].strip()
+            db_open_part = parts[0][8:].strip()
+            m = re.match(r'^(".*?"|\'.*?\'|\S+)\s+(.+)$', db_open_part)
+            if m:
+                type_expr = m.group(1).strip()
+                conn_expr = m.group(2).strip()
+                try:
+                    type_val = eval_expression(type_expr, variables)
+                    conn_val = eval_expression(conn_expr, variables)
+                    
+                    if type_val == "sqlite":
+                        conn_id = _db.connectSqlite(conn_val)
+                    elif type_val == "mysql":
+                        if isinstance(conn_val, dict):
+                            conn_id = _db.connectMysql(**conn_val)
+                        else:
+                            conn_id = _db.connectMysql(conn_val)
+                    elif type_val == "postgres":
+                        if isinstance(conn_val, dict):
+                            conn_id = _db.connectPostgres(**conn_val)
+                        else:
+                            conn_id = _db.connectPostgres(conn_val)
+                    else:
+                        error.print_error_msg(f"Unsupported database type: {type_val}")
+                        return
+                    
+                    variables[var_name] = conn_id
+                except Exception as exc:
+                    error.print_error(exc)
+                return
+
+    if stripped.startswith("DB_QUERY "):
+        parts = stripped.rsplit(" AS ", 1)
+        if len(parts) == 2:
+            var_name = parts[1].strip()
+            query_part = parts[0][9:].strip()
+            m = re.match(r'^([A-Za-z_]\w*)\s+(.+)$', query_part)
+            if m:
+                conn_var = m.group(1)
+                rest = m.group(2).strip()
+                sql_expr = rest
+                params_expr = None
+                if " WITH " in rest:
+                    sql_expr, params_expr = rest.rsplit(" WITH ", 1)
+                    if (sql_expr.count('"') % 2 != 0) or (sql_expr.count("'") % 2 != 0):
+                        sql_expr = rest
+                        params_expr = None
+                try:
+                    conn_id = variables[conn_var]
+                    sql_val = eval_expression(sql_expr, variables)
+                    params_val = eval_expression(params_expr, variables) if params_expr else None
+                    result = _db.query(conn_id, sql_val, params_val)
+                    variables[var_name] = result
+                except Exception as exc:
+                    error.print_error(exc)
+                return
+
+    if stripped.startswith("DB_EXECUTE "):
+        exec_part = stripped[11:].strip()
+        m = re.match(r'^([A-Za-z_]\w*)\s+(.+)$', exec_part)
+        if m:
+            conn_var = m.group(1)
+            rest = m.group(2).strip()
+            sql_expr = rest
+            params_expr = None
+            if " WITH " in rest:
+                sql_expr, params_expr = rest.rsplit(" WITH ", 1)
+                if (sql_expr.count('"') % 2 != 0) or (sql_expr.count("'") % 2 != 0):
+                    sql_expr = rest
+                    params_expr = None
+            try:
+                conn_id = variables[conn_var]
+                sql_val = eval_expression(sql_expr, variables)
+                params_val = eval_expression(params_expr, variables) if params_expr else None
+                result = _db.execute(conn_id, sql_val, params_val)
+                variables["__last_affected__"] = result
+            except Exception as exc:
+                error.print_error(exc)
+            return
+
+    if stripped.startswith("DB_CLOSE "):
+        conn_var = stripped[9:].strip()
+        try:
+            conn_id = variables[conn_var]
+            _db.close(conn_id)
+            if conn_var in variables:
+                del variables[conn_var]
+        except Exception as exc:
+            error.print_error(exc)
+        return
 
     if handle_augmented(stripped, variables, eval_expression): return
 
@@ -1094,20 +1206,21 @@ def execute_line(line, variables=None):
     if multi:
         names_str, expr = multi.group(1), multi.group(2).strip()
         names = [n.strip() for n in names_str.split(',')]
-        # Evaluate RHS
-        try:
-            result = eval_expression(expr, variables)
-        except ValueError as exc:
-            error.print_error(exc)
+        if len(names) > 1:
+            # Evaluate RHS
+            try:
+                result = eval_expression(expr, variables)
+            except ValueError as exc:
+                error.print_error(exc)
+                return
+            # If result is not a tuple with enough elements, error
+            if not isinstance(result, tuple) or len(result) != len(names):
+                error.print_error_msg(f"Expected {len(names)} values, got {type(result).__name__}")
+                return
+            for name, val in zip(names, result):
+                # Respect locks and constants (call assign_variable or do manually)
+                assign_variable(name, str(val), variables, eval_expression, parse_in_call, execute_line)
             return
-        # If result is not a tuple with enough elements, error
-        if not isinstance(result, tuple) or len(result) != len(names):
-            error.print_error_msg(f"Expected {len(names)} values, got {type(result).__name__}")
-            return
-        for name, val in zip(names, result):
-            # Respect locks and constants (call assign_variable or do manually)
-            assign_variable(name, str(val), variables, eval_expression, parse_in_call, execute_line)
-        return
 
     assignment = global_vars.ASSIGNMENT_RE.match(stripped)
     if assignment:

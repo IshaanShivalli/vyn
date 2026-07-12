@@ -1,0 +1,27 @@
+# Logger.vyn - Simple levelled logger
+import String
+
+INFO = "INFO"
+WARN = "WARN"
+ERROR = "ERROR"
+DEBUG = "DEBUG"
+
+log = function(level, message) perform
+    print("[" + level + "] " + message)
+endFunc
+
+logInfo = function(message) perform
+    log(INFO, message)
+endFunc
+
+logWarn = function(message) perform
+    log(WARN, message)
+endFunc
+
+logError = function(message) perform
+    log(ERROR, message)
+endFunc
+
+logDebug = function(message) perform
+    log(DEBUG, message)
+endFunc

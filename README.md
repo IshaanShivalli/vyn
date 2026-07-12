@@ -1,9 +1,3 @@
-# Warning!!
-
-Run the OPEN cmd for the db with care. The cmd is having a buffer pool and may crash your PC.
-This bug will soon be fixed.
-
-
 # Vyn Programming Language
 
 Vyn is a lightweight, dynamically-typed scripting language with an interactive REPL and support for structured programming. Vyn source files use the `.vyn` extension.
