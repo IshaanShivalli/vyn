@@ -34,6 +34,12 @@ import importlib.util as _ilu
 import os as _os
 import sys
 
+from db.db_syntax import (
+    handle_connect, handle_db_query, handle_ai_method,
+    handle_ai_enable, handle_ai_disable, handle_close,
+    register_db_functions
+)
+
 structs_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "structs")
 unions_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "unions")
 
@@ -1220,6 +1226,20 @@ def execute_line(line, variables=None):
             for name, val in zip(names, result):
                 # Respect locks and constants (call assign_variable or do manually)
                 assign_variable(name, str(val), variables, eval_expression, parse_in_call, execute_line)
+            return
+
+    if handle_connect(stripped, variables, eval_expression):
+        return
+    if handle_ai_enable(stripped, variables):
+        return
+    if handle_ai_disable(stripped, variables):
+        return
+    if handle_close(stripped, variables):
+        return
+    if handle_ai_method(stripped, variables):
+        return
+    if stripped.startswith('DB_QUERY'):
+        if handle_db_query(stripped, variables, _read_line, eval_expression, execute_line):
             return
 
     assignment = global_vars.ASSIGNMENT_RE.match(stripped)
