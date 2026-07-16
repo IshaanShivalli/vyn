@@ -42,17 +42,22 @@ void CLI::run(int argc, char* argv[])
             base_dir = "../..";
         }
         
-        std::string lib_path = base_dir + "/lib";
-        std::string pack_path = base_dir + "/packages";
+        std::filesystem::path root_path(base_dir);
+        std::filesystem::path vyn_lib_root = root_path.parent_path() / "vyn-lib";
+        if (root_path.filename() == "PL")
+        {
+            vyn_lib_root = root_path.parent_path() / "vyn-lib";
+        }
+        std::string lib_path = (vyn_lib_root / "lib").string();
+        std::string pack_path = (vyn_lib_root / "packages").string();
         
-        std::cout << "Removing old directories: " << lib_path << " and " << pack_path << '\n';
+        std::cout << "Refreshing vyn-lib directories: " << lib_path << " and " << pack_path << '\n';
         std::filesystem::remove_all(lib_path);
         std::filesystem::remove_all(pack_path);
         
-        std::string dep_dir = base_dir + "/vyn-dependencies";
-        std::string dep_lib = dep_dir + "/libraries";
-        std::string dep_pack = dep_dir + "/packages";
-        
+        std::string dep_lib = lib_path;
+        std::string dep_pack = pack_path;
+
         std::filesystem::create_directories(dep_lib);
         std::filesystem::create_directories(dep_pack);
         

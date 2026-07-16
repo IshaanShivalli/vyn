@@ -2,7 +2,7 @@
 
 The official dependency collector for the **Vyn Programming Language**.
 
-Vyn Collector manages external **libraries** and **packages** for Vyn. It downloads them from the official `vyn-lib` repository and installs them into the user's dependency directory.
+Vyn Collector manages external **libraries** and **packages** for Vyn. It downloads them from the official GitHub `vyn-lib` repository and installs them into the sibling local `vyn-lib` checkout.
 
 The collector is written primarily in **C++**, with supporting modules in **Java** and **TypeScript**.
 
@@ -192,17 +192,17 @@ The collector checks the official Vyn registry.
 ```
 vyn-lib
 │
-├── libraries/
+├── lib/
 ├── packages/
 └── registry/
 ```
 
-The required files are downloaded from GitHub and installed into
+The required files are downloaded from GitHub and installed into the sibling repo:
 
 ```
-vyn-dependencies/
+../vyn-lib/
 │
-├── libraries/
+├── lib/
 └── packages/
 ```
 

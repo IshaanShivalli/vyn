@@ -242,6 +242,33 @@ Imported modules such as `math` are exposed as module objects, so `math.sqrt(9)`
 
 ---
 
+### Database Integration
+Vyn registers the database runtime globally at startup. SQLite works out of the box; MySQL and Postgres use optional Python drivers.
+
+#### Native DB Syntax
+```vyn
+DB_OPEN "sqlite" "app.sqlite" AS conn
+DB_EXECUTE conn "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"
+DB_EXECUTE conn "INSERT INTO users (name) VALUES ('Ada')"
+DB_QUERY conn "SELECT name FROM users" AS rows
+print(rows)
+DB_CLOSE conn
+```
+
+#### Function Syntax
+```vyn
+conn = connect("sqlite", "app.sqlite")
+db.execute(conn, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+db.execute(conn, "INSERT INTO users (name) VALUES ('Ada')")
+rows = db.query(conn, "SELECT name FROM users")
+print(rows)
+db.close(conn)
+```
+
+Available helpers include `connectSqlite`, `connectMysql`, `connectPostgres`, `dbQuery`, `dbExecute`, `dbClose`, `db_query`, `db_execute`, `db_close`, and the `db` namespace.
+
+---
+
 ### Built-in Standard Libraries
 
 #### File I/O Functions

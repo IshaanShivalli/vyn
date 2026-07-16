@@ -39,6 +39,7 @@ from db.db_syntax import (
     handle_ai_enable, handle_ai_disable, handle_close,
     register_db_functions
 )
+import db.db as _db
 
 structs_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "structs")
 unions_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "unions")
@@ -78,7 +79,7 @@ vyn_union_spec.loader.exec_module(vyn_union_syntax)
 
 time_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'time.py')
 if not _os.path.exists(time_path):
-    time_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'vyn-dependencies', 'libraries', 'time.py')
+    time_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', '..', 'vyn-lib', 'lib', 'time.py')
 
 _timed_spec = _ilu.spec_from_file_location(
     "vyn_time",
@@ -87,14 +88,8 @@ _timed_spec = _ilu.spec_from_file_location(
 timed_module = _ilu.module_from_spec(_timed_spec)
 _timed_spec.loader.exec_module(timed_module)
 
-_db_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'lib', 'db.py')
-if not _os.path.exists(_db_path):
-    _db_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..', 'vyn-dependencies', 'libraries', 'db.py')
-_db_spec = _ilu.spec_from_file_location("vyn_db", _db_path)
-_db = _ilu.module_from_spec(_db_spec)
-_db_spec.loader.exec_module(_db)
-
 dependency.register_io_functions(global_vars.variables)
+register_db_functions(global_vars.variables)
 global_vars.variables.update({
     'memsize': mem_module.memsize,
     'memzero': mem_module.memzero,
@@ -597,6 +592,9 @@ def execute_line(line, variables=None):
                 return
 
     if stripped.startswith("DB_QUERY "):
+        if "|>" in stripped and handle_db_query(stripped, variables, _read_line, eval_expression, execute_line):
+            return
+
         parts = stripped.rsplit(" AS ", 1)
         if len(parts) == 2:
             var_name = parts[1].strip()
@@ -1271,6 +1269,8 @@ def execute_line(line, variables=None):
                 print(result)
         except ValueError as exc:
             error.print_error(exc)
+        except Exception as exc:
+            error.print_function_call_error(exc)
         return
 
     if stripped.startswith("typeof(") and stripped.endswith(")"):

@@ -1,0 +1,48 @@
+name: Test VYn Package Collector
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-package-collector:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Get VYn source code
+      - name: Checkout VYn
+        uses: actions/checkout@v4
+
+      # 2. Install dependencies
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git cmake g++
+
+      # 3. Build VYn
+      - name: Build VYn
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      # 4. Create a completely clean VYn environment
+      - name: Create clean environment
+        run: |
+          rm -rf "$HOME/.vyn"
+          mkdir -p "$HOME/.vyn"
+
+      # 5. Test the collector
+      - name: Install library from VYn-Lib
+        run: |
+          ./build/vyn install vyn-example
+
+      # 6. Verify that the library was actually installed
+      - name: Verify package installation
+        run: |
+          test -d "$HOME/.vyn/libs/vyn-example"
+
+      # 7. Test using the installed library
+      - name: Run VYn program
+        run: |
+          ./build/vyn run tests/package_test.vyn

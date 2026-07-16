@@ -1,0 +1,8 @@
+DB_OPEN "sqlite" "examples/example_database.sqlite" AS conn
+DB_EXECUTE conn "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)"
+DB_EXECUTE conn "DELETE FROM users"
+DB_EXECUTE conn "INSERT INTO users (name) VALUES ('Ada')"
+DB_EXECUTE conn "INSERT INTO users (name) VALUES ('Grace')"
+DB_QUERY conn "SELECT name FROM users ORDER BY id" AS rows
+print(rows)
+DB_CLOSE conn

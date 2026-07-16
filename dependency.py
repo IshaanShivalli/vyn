@@ -7,7 +7,7 @@ IMPORT_RE = re.compile(r'^import\s+(?P<module>[\w./\\-]+?)(?:\.(?:vyn|go))?\s*$'
 
 # Search path for .vyn files. Current directory is always checked first,
 # then each entry in VYN_PATH in order.
-VYN_PATH = ['packages', 'vyn-dependencies/packages']
+VYN_PATH = ['examples', 'packages', '../vyn-lib/packages']
 
 _file_lines_queue = None
 _file_lines_index = [0]
@@ -35,9 +35,15 @@ def is_stdlib_import(module_name):
     """Return True if module_name resolves to a stdlib file or package."""
     name = get_stdlib_name(module_name)
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(base_dir)
+    external_lib_dir = os.path.join(parent_dir, "vyn-lib", "lib")
     lib_dir = os.path.join(base_dir, "lib")
-    dep_lib_dir = os.path.join(base_dir, "vyn-dependencies", "libraries")
-    if os.path.exists(os.path.join(lib_dir, f"{name}.py")) or os.path.exists(os.path.join(dep_lib_dir, f"{name}.py")):
+    builtins_dir = os.path.join(base_dir, "lib_builtins")
+    if (
+        os.path.exists(os.path.join(external_lib_dir, f"{name}.py")) or
+        os.path.exists(os.path.join(lib_dir, f"{name}.py")) or
+        os.path.exists(os.path.join(builtins_dir, f"{name}.py"))
+    ):
         return True
     return os.path.exists(os.path.join(base_dir, name, "__init__.py"))
 

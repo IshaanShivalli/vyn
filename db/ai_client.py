@@ -224,6 +224,10 @@ def ai_sql(prompt, schema_info):
     return str(raw)
 
 
+def ai_table_prompt(prompt, schema_info):
+    return ai_sql(prompt, schema_info)
+
+
 def wake_space():
     """
     Ping the space to wake it up if it went to sleep.

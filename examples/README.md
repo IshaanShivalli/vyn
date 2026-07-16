@@ -21,5 +21,6 @@ Files:
 - `10_proofs_timed.vyn`: assertions, proof blocks, and timed blocks.
 - `11_file_io.vyn`: file I/O helpers.
 - `12_structs_unions.vyn`: structs, unions, and math-module imports.
+- `13_database.vyn`: SQLite database open, execute, query, print, and close.
 
 `IN(...)` input is documented in the README, but it is not included here because these examples are designed to run without waiting for typed input.
