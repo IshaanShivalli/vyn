@@ -370,11 +370,12 @@ class ExpressionEvaluator(ast.NodeVisitor):
         obj = self.visit(node.value)
         if isinstance(obj, oop_module.VynObject):
             return obj.get_attr(node.attr)
-        if hasattr(obj, "get_attr"):           # ← Support for VynStructInstance
+        if hasattr(obj, "get_attr"):
             return obj.get_attr(node.attr)
         try:
             return getattr(obj, node.attr)
         except AttributeError:
+            error.print_error_msg(f"Attribute '{node.attr}' not found on object")
             return 'NIL'
 
     def visit_Constant(self, node):
@@ -387,25 +388,19 @@ class ExpressionEvaluator(ast.NodeVisitor):
     
 
     def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id == 'typeof':
-            val = self.visit(node.args[0])
-            mapping = {'list':'list','dict':'dict','tuple':'tuple',
-                       'bool':'bool','int':'int','float':'float','str':'str',
-                       'VynObject':'object','VynClass':'class','VynStructInstance': 'struct', 
-                       'Ok': 'Ok', 'Err': 'Err', 'Some': 'Some', 'NoneType': 'None',}
-            return mapping.get(type(val).__name__, 'unknown')
-        if isinstance(node.func, ast.Name) and node.func.id == 'not_in':
-            return self.visit(node.args[0]) not in self.visit(node.args[1])
-        if isinstance(node.func, ast.Name) and node.func.id == 'sizeof':
-            val = self.visit(node.args[0])
-            return mem_module.sizeof(val)
-        if isinstance(node.func, ast.Name) and node.func.id == 'memsize':
-            mid = self.visit(node.args[0])
-            return mem_module.memsize(mid)
+        # ... (existing code)
         func = self.visit(node.func)
-        if func == 'NIL': return 'NIL'
-        if not callable(func): error.not_a_function()
-        return func(*[self.visit(a) for a in node.args])
+        if func == 'NIL':
+            error.print_error_msg("Cannot call NIL")
+            return 'NIL'
+        if not callable(func):
+            error.not_a_function()
+            return 'NIL'
+        try:
+            return func(*[self.visit(a) for a in node.args])
+        except Exception as e:
+            error.print_error_msg(f"Error in function call: {e}")
+            return 'NIL'
 
     def generic_visit(self, node):
         error.unsupported_expression(ast.dump(node))

@@ -1,83 +1,92 @@
 """
-os.vyn implementation as real Python library.
+os library for Vyn -- filesystem/OS helpers beyond what dependency.py
+already registers unconditionally (open_file/read_file/read_line/
+write_file/close_file/list_dir/exists). Gated behind `import os` since
+these are more powerful (delete, move, env vars) and shouldn't be
+available without an explicit opt-in.
+
+import os
 """
+
 import os as _os
-import shutil
-import tempfile
+import shutil as _shutil
 
 
-def getcwd():
+def mkdir(path):
+    _os.makedirs(path, exist_ok=True)
+    return None
+
+
+def rmdir(path):
+    _shutil.rmtree(path)
+    return None
+
+
+def remove_file(path):
+    _os.remove(path)
+    return None
+
+
+def copy_file(src, dst):
+    _shutil.copy2(src, dst)
+    return None
+
+
+def move_file(src, dst):
+    _shutil.move(src, dst)
+    return None
+
+
+def path_join(*parts):
+    return _os.path.join(*parts)
+
+
+def path_basename(path):
+    return _os.path.basename(path)
+
+
+def path_dirname(path):
+    return _os.path.dirname(path)
+
+
+def path_extension(path):
+    return _os.path.splitext(path)[1]
+
+
+def is_file(path):
+    return _os.path.isfile(path)
+
+
+def is_dir(path):
+    return _os.path.isdir(path)
+
+
+def file_size(path):
+    return _os.path.getsize(path)
+
+
+def cwd():
     return _os.getcwd()
 
 
 def chdir(path):
-    return _os.chdir(path)
+    _os.chdir(path)
+    return None
 
 
-def listFiles(path):
-    return _os.listdir(path)
+def env_get(name, default=None):
+    return _os.environ.get(name, default)
 
 
-def fileExists(path):
-    return _os.path.exists(path)
+def env_set(name, value):
+    _os.environ[name] = str(value)
+    return None
 
 
-def mkdir(path):
-    return _os.mkdir(path)
-
-
-def rmdir(path):
-    return _os.rmdir(path)
-
-
-def removeFile(path):
-    return _os.remove(path)
-
-
-def copyFile(src, dest):
-    return shutil.copy(src, dest)
-
-
-def renameFile(oldName, newName):
-    return _os.rename(oldName, newName)
-
-
-def getEnv(varName):
-    return _os.getenv(varName)
-
-
-def setEnv(varName, value):
-    _os.environ[varName] = value
-    return value
-
-
-def getHomeDir():
-    return _os.path.expanduser("~")
-
-
-def getTempDir():
-    return tempfile.gettempdir()
-
-
-def pathSeparator():
-    return _os.sep
-
-
-def getPathExists(path):
-    return _os.path.exists(path)
-
-
-def isFile(path):
-    return _os.path.isfile(path)
-
-
-def isDir(path):
-    return _os.path.isdir(path)
-
-
-def getFileSize(path):
-    return _os.path.getsize(path)
-
-
-def getFileModTime(path):
-    return _os.path.getmtime(path)
+def walk(path):
+    """List of every file path under `path`, recursively."""
+    found = []
+    for root, _dirs, files in _os.walk(path):
+        for f in files:
+            found.append(_os.path.join(root, f))
+    return found

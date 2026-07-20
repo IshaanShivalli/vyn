@@ -8,6 +8,16 @@ Vyn is a lightweight, dynamically-typed scripting language with an interactive R
 
 ---
 
+## Getting Started
+
+To get started with Vyn, you'll need to have Python 3.6 or later installed. You can then clone the Vyn repository from GitHub and run the `main.py` file to start the interactive REPL.
+
+```powershell
+git clone https://github.com/IshaanShivalli/vyn.git
+cd vyn
+python main.py
+```
+
 ## Running Vyn Code
 
 ### Interactive REPL
@@ -270,6 +280,176 @@ Available helpers include `connectSqlite`, `connectMysql`, `connectPostgres`, `d
 ---
 
 ### Built-in Standard Libraries
+
+## Examples
+
+### Basics
+
+```vyn
+# Variables and basic expressions.
+name = "Vyn"
+version = 1
+score = 7 + 3 * 2
+power = 2 ** 5
+remainder = 17 % 5
+message = "Hello " ++ name
+status = score >= 10 ? "ready" : "waiting"
+items = [1, 2, 3]
+profile = {"name": "Ishaan", "level": 5}
+
+print("message:", message)
+print("score:", score)
+print("power:", power)
+print("remainder:", remainder)
+print("status:", status)
+print("first item:", items[0])
+print("profile level:", profile["level"])
+print("typeof score:", typeof(score))
+print("typeof items:", typeof(items))
+```
+
+### Conditionals
+
+```vyn
+# IF / Elif / Else blocks.
+temperature = 29
+
+IF ( temperature > 35 ) do
+  print("hot")
+Elif { temperature >= 25 } do
+  print("warm")
+Else do
+  print("cool")
+end
+
+age = 16
+category = age >= 18 ? "adult" : "minor"
+print("category:", category)
+```
+
+### Loops
+
+```vyn
+# forLoop, whileLoop, repeatUntil, forIn, break, and continue.
+total = 0
+forLoop { i = 1; i <= 5; i: i + 1 } do
+  total = total + i
+endLoop
+print("sum 1..5:", total)
+
+count = 0
+whileLoop { count < 3 } do
+  count++
+  print("while count:", count)
+endLoop
+
+hits = 0
+repeatUntil { hits == 2 } do
+  hits++
+  print("repeat hit:", hits)
+endLoop
+
+forIn { item in [10, 20, 30] } do
+  print("forIn item:", item)
+endLoop
+
+forLoop { n = 1; n <= 3; n: n + 1 } do
+  print("continue loop before:", n)
+  continue
+  print("continue loop after:", n)
+endLoop
+
+forLoop { stopAt = 1; stopAt <= 3; stopAt: stopAt + 1 } do
+  print("break loop before:", stopAt)
+  break
+  print("break loop after:", stopAt)
+endLoop
+```
+
+### Functions
+
+```vyn
+# Named functions, assigned functions, defaults, lambdas, and nested returns.
+function add(a, b) perform
+  return a + b
+endFunc
+
+multiply = function(a, b) perform
+  return a * b
+endFunc
+
+function greet(name, greeting = "Hello") perform
+  return greeting ++ " " ++ name
+endFunc
+
+function sign(value) perform
+  IF ( value > 0 ) do
+    return "positive"
+  Elif { value == 0 } do
+    return "zero"
+  Else do
+    return "negative"
+  end
+endFunc
+
+double = lambda x: x * 2
+
+print("add:", add(2, 3))
+print("multiply:", multiply(4, 5))
+print(greet("Vyn"))
+print(greet("Vyn", "Hi"))
+print("sign:", sign(-4))
+print("double:", double(9))
+```
+
+## Language Reference
+
+### Variables & Assignment
+- `x = 10` - integer
+- `name = "John"` - string
+- `value = IN(int "Prompt: ")` - input
+
+### Arithmetic & Expressions
+- `result = 5 + 3 * 2` - operators: +, -, *, /, %, **
+- `x = 10 ? "yes" : "no"` - ternary operator
+
+### Comparisons
+- `x > 5, x < 10, x == 5, x != 0, x >= 5, x <= 5`
+
+### Boolean & Logic
+- `result = true and false, true or false, not true`
+
+### Print
+- `print(x)` - single value
+- `print(x, y, z)` - multiple values
+- `print("hello " + name)` - string concatenation
+
+### Input
+- `age = IN(int "Enter age: ")` - read integer
+- `name = IN(str "Your name: ")` - read string
+- `active = IN(bool "Active? ")` - read boolean
+
+### Functions
+- `myFunc = function(x, y) perform` - define function
+- `myFunc(3, 5)` - call function
+
+### Conditionals
+- `IF ( x > 5 ) do`
+- `Elif { x == 5 } do`
+- `Else do`
+- `end`
+
+### Loops
+- `forLoop { i = 1; i < 10; i: i + 1 } do`
+- `whileLoop { count < 10 } do`
+
+### Imports
+- `import myfile` - load and execute myfile.vyn
+
+
+
+
+
 
 #### File I/O Functions
 The following actions are registered globally:

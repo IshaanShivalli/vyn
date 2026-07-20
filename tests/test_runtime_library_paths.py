@@ -29,14 +29,14 @@ class RuntimeLibraryPathTests(unittest.TestCase):
 
     def test_choice_accepts_multiple_values(self):
         f.execute_line("import random", f.global_vars.variables)
-        result = f.eval_expression("choice(1, 2, 5, 6)", f.global_vars.variables)
+        result = f.eval_expression("pick([1, 2, 5, 6])", f.global_vars.variables)
         self.assertIn(result, (1, 2, 5, 6))
 
     def test_attribute_call_errors_do_not_escape_repl(self):
         f.execute_line("import random", f.global_vars.variables)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            f.execute_line("random.choice(1)", f.global_vars.variables)
+            f.execute_line("random.pick(1)", f.global_vars.variables)
         self.assertIn("Error in function call", output.getvalue())
 
 
